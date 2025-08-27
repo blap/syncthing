@@ -1,6 +1,21 @@
 function build {
+    # Check if force-cgo flag is set
+    $forceCGO = $false
+    foreach ($arg in $args) {
+        if ($arg -eq "-force-cgo" -or $arg -eq "--force-cgo") {
+            $forceCGO = $true
+            break
+        }
+    }
+    
     # Disable CGO for Windows builds to avoid the modernc.org/libc issue
-    $env:CGO_ENABLED = "1"
+    # unless explicitly forced to enable it
+    # See docs/windows-cgo-build-guide.md for more details about Windows builds
+    if (($env:GOOS -eq "windows" -or ([string]::IsNullOrEmpty($env:GOOS) -and $env:OS -eq "Windows_NT")) -and -not $forceCGO) {
+        $env:CGO_ENABLED = "0"
+    } elseif ($forceCGO) {
+        $env:CGO_ENABLED = "1"
+    }
     
     # Ensure goversioninfo is available for Windows builds
     if ($env:GOOS -eq "windows" -or ([string]::IsNullOrEmpty($env:GOOS) -and $env:OS -eq "Windows_NT")) {

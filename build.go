@@ -7,6 +7,12 @@
 //go:build tools
 // +build tools
 
+// Package main provides the build script for Syncthing.
+//
+// Windows builds:
+// When building for Windows, CGO is automatically disabled to avoid
+// issues with the modernc.org/libc package which can cause a "panic: no console"
+// error. See docs/windows-cgo-build-guide.md for more details.
 package main
 
 import (
@@ -55,6 +61,7 @@ var (
 	debugBinary   bool
 	coverage      bool
 	long          bool
+	forceCGO      bool
 	timeout       = "120s"
 	longTimeout   = "600s"
 	numVersions   = 5
@@ -376,6 +383,7 @@ func parseFlags() {
 	flag.BoolVar(&debugBinary, "debug-binary", debugBinary, "Create unoptimized binary to use with delve, set -gcflags='-N -l' and omit -ldflags")
 	flag.BoolVar(&coverage, "coverage", coverage, "Write coverage profile of tests to coverage.txt")
 	flag.BoolVar(&long, "long", long, "Run tests without the -short flag")
+	flag.BoolVar(&forceCGO, "force-cgo", forceCGO, "Force CGO_ENABLED=1 for Windows builds")
 	flag.IntVar(&numVersions, "num-versions", numVersions, "Number of versions for changelog command")
 	flag.StringVar(&run, "run", "", "Specify which tests to run")
 	flag.StringVar(&benchRun, "bench", "", "Specify which benchmarks to run")
@@ -514,12 +522,25 @@ func setBuildEnvVars() {
 	os.Setenv("GOOS", goos)
 	os.Setenv("GOARCH", goarch)
 	os.Setenv("CC", cc)
+	// Disable CGO for Windows builds to avoid the modernc.org/libc issue
+	// unless explicitly forced to enable it
+	if goos == "windows" && !forceCGO {
+		os.Setenv("CGO_ENABLED", "0")
+	} else if goos == "windows" && forceCGO {
+		os.Setenv("CGO_ENABLED", "1")
+	}
 }
 
 func appendParameters(args []string, tags []string, pkgs ...string) []string {
 	if pkgdir != "" {
 		args = append(args, "-pkgdir", pkgdir)
 	}
+
+	// Add forcecgo tag if forceCGO is enabled
+	if forceCGO {
+		tags = append(tags, "forcecgo")
+	}
+
 	if len(tags) > 0 {
 		args = append(args, "-tags", strings.Join(tags, " "))
 	}
@@ -684,6 +705,22 @@ func createPostInstScript(target target) (string, error) {
 }
 
 func shouldBuildSyso(dir string) (string, error) {
+	// Skip resource generation if not on Windows
+	if goos != "windows" {
+		return "", nil
+	}
+
+	// Check if goversioninfo is available
+	if _, err := exec.LookPath("goversioninfo"); err != nil {
+		// Try to install it
+		log.Println("goversioninfo not found, attempting to install...")
+		cmd := exec.Command(goCmd, "install", "github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest")
+		if installErr := cmd.Run(); installErr != nil {
+			return "", errors.New("goversioninfo not found and failed to install: " + installErr.Error() + ". Windows binaries will not have file information encoded")
+		}
+		log.Println("goversioninfo installed successfully")
+	}
+
 	type M map[string]interface{}
 	version := getVersion()
 	version = strings.TrimPrefix(version, "v")
@@ -734,7 +771,10 @@ func shouldBuildSyso(dir string) (string, error) {
 	// See https://github.com/josephspurrier/goversioninfo#command-line-flags
 	arm := strings.HasPrefix(goarch, "arm")
 	a64 := strings.Contains(goarch, "64")
-	if _, err := runError("goversioninfo", "-o", sysoPath, fmt.Sprintf("-arm=%v", arm), fmt.Sprintf("-64=%v", a64)); err != nil {
+
+	cmd := exec.Command("goversioninfo", "-o", sysoPath, fmt.Sprintf("-arm=%v", arm), fmt.Sprintf("-64=%v", a64))
+	cmd.Stderr = os.Stderr // Show any errors from goversioninfo
+	if err := cmd.Run(); err != nil {
 		return "", errors.New("failed to create " + sysoPath + ": " + err.Error())
 	}
 
@@ -922,9 +962,11 @@ func rmr(paths ...string) {
 }
 
 func getReleaseVersion() (string, error) {
+	// Check for VERSION environment variable first
 	if ver := os.Getenv("VERSION"); ver != "" {
 		return strings.TrimSpace(ver), nil
 	}
+	// Then try to read RELEASE file
 	bs, err := os.ReadFile("RELEASE")
 	if err != nil {
 		return "", err
@@ -1105,6 +1147,27 @@ func buildArch() string {
 
 func archiveName(target target) string {
 	return fmt.Sprintf("%s-%s-%s", target.name, buildArch(), version)
+}
+
+func buildTarget(target target, tags []string) error {
+	// Add CGO_ENABLED=0 for Windows builds to avoid the modernc.org/libc issue
+	// unless explicitly forced to enable it
+	if goos == "windows" && !forceCGO {
+		os.Setenv("CGO_ENABLED", "0")
+	} else if goos == "windows" && forceCGO {
+		os.Setenv("CGO_ENABLED", "1")
+	}
+
+	args := []string{"build"}
+	if buildOut != "" {
+		args = append(args, "-o", buildOut)
+	}
+	args = appendParameters(args, tags, target.buildPkgs...)
+	cmd := exec.Command(goCmd, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
 }
 
 func runError(cmd string, args ...string) ([]byte, error) {

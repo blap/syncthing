@@ -234,11 +234,21 @@ func TryMigrateDatabase(ctx context.Context, deleteRetention time.Duration, apiA
 						return
 					}
 					batch = batch[:0]
+						t1 = time.Now()
+						slog.Info("Still migrating folder", "folder", folder, "files", files, "blocks", blocks, "duration", d.Truncate(time.Second), "blocksrate", float64(blocks)/d.Seconds(), "filesrate", float64(files)/d.Seconds())
+>>>>>>> upstream/main
+					}
 					// Reduce logging frequency to avoid performance impact
 					if time.Since(lastLog) > 30*time.Second {
 						d := time.Since(t0) + 1
 						lastLog = time.Now()
-						slog.Info("Still migrating folder", "folder", folder, "files", files, "blocks", blocks, "duration", d.Truncate(time.Second), "filesrate", float64(files)/d.Seconds())
+						t1 = time.Now()
+						slog.Info("Still migrating folder", "folder", folder, "files", files, "blocks", blocks, "duration", d.Truncate(time.Second), "blocksrate", float64(blocks)/d.Seconds(), "filesrate", float64(files)/d.Seconds())
+					}
+=======
+						t1 = time.Now()
+						slog.Info("Still migrating folder", "folder", folder, "files", files, "blocks", blocks, "duration", d.Truncate(time.Second), "blocksrate", float64(blocks)/d.Seconds(), "filesrate", float64(files)/d.Seconds())
+>>>>>>> upstream/main
 					}
 				}
 			}

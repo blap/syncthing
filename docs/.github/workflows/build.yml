@@ -1,0 +1,138 @@
+name: Build documentation
+on:
+  pull_request:
+  push:
+    branches:
+      - '*'
+    tags:
+      - v*
+  workflow_dispatch:
+  schedule:
+    - cron: '25 7 * * 0'
+
+jobs:
+
+  build-html-man-pdf:
+    runs-on: ubuntu-latest
+    name: Build documentation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set release/tag
+        run: |
+          git describe --tags --long --always > RELEASE || true
+          git describe --tags --exact-match > TAG || true
+
+      - name: Build
+        uses: docker://docker.io/sphinxdoc/sphinx-latexpdf:latest
+        with:
+          entrypoint: make
+          args: html man latexpdf
+
+      - name: Archive artifacts (html)
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: html
+          path: _build/html
+          retention-days: 14
+
+      - name: Archive artifacts (man)
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: man
+          path: _build/man
+          retention-days: 14
+
+      - name: Archive artifacts (pdf)
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: pdf
+          path: _build/latex/*.pdf
+          retention-days: 14
+
+  upload:
+    runs-on: ubuntu-latest
+    name: Upload rendered site
+    needs: build-html-man-pdf
+    environment: github-pages
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    steps:
+
+      - name: Prepare site (html)
+        uses: actions/download-artifact@v4
+        with:
+          name: html
+          path: _site
+
+      - name: Prepare site (man)
+        uses: actions/download-artifact@v4
+        with:
+          name: man
+          path: _site/man
+
+      - name: Prepare site (pdf)
+        uses: actions/download-artifact@v4
+        with:
+          name: pdf
+          path: _site/pdf
+
+      - name: Upload rendered site
+        uses: docker://docker.io/rclone/rclone:latest
+        env:
+          RCLONE_CONFIG_OBJSTORE_TYPE: s3
+          RCLONE_CONFIG_OBJSTORE_PROVIDER: ${{ secrets.S3_PROVIDER }}
+          RCLONE_CONFIG_OBJSTORE_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_OBJSTORE_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_OBJSTORE_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          RCLONE_CONFIG_OBJSTORE_REGION: ${{ secrets.S3_REGION }}
+          RCLONE_CONFIG_OBJSTORE_ACL: public-read
+        with:
+          args: sync _site objstore:${{ secrets.S3_BUCKET }}/${{ github.ref_name }}
+
+  publish:
+    runs-on: ubuntu-latest
+    name: Publish to GitHub pages
+    needs: build-html-man-pdf
+    environment: github-pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Prepare site (pre-rendered)
+        run: |
+          git clone --depth 1 https://github.com/syncthing/docs-pre-rendered.git _site
+          rm -rf _site/.git
+          go run _script/lsver.go _site > _site/versions.json
+
+      - name: Prepare site (html)
+        uses: actions/download-artifact@v4
+        with:
+          name: html
+          path: _site
+
+      - name: Prepare site (man)
+        uses: actions/download-artifact@v4
+        with:
+          name: man
+          path: _site/man
+
+      - name: Prepare site (pdf)
+        uses: actions/download-artifact@v4
+        with:
+          name: pdf
+          path: _site/pdf
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

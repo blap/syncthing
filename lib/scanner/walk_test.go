@@ -619,10 +619,6 @@ func (l testfileList) String() string {
 	return b.String()
 }
 
-const (
-	testdataSize = 17<<20 + 1
-)
-
 func BenchmarkHashFile(b *testing.B) {
 	testFs := newDataFs()
 	b.ResetTimer()

@@ -981,8 +981,7 @@ func TestIgnoreDeleteUnignore(t *testing.T) {
 
 	fc := addFakeConn(m, device1, fcfg.ID)
 	fc.folder = "default"
-	fc.mut.Lock()
-	fc.mut.Unlock()
+	// Removed empty critical section - lock/unlock with no work in between
 
 	file := "foobar"
 	contents := []byte("test file contents\n")

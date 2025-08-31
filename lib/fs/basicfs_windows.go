@@ -12,7 +12,6 @@ package fs
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -385,23 +384,7 @@ func generate83Name(longName string) string {
 	return strings.ToUpper(nameWithoutExt) + "~1" + strings.ToUpper(ext)
 }
 
-// Helper function to get short path name (8.3 format)
-func getShortPathName(longPath string) (string, error) {
-	if in, err := syscall.UTF16FromString(longPath); err == nil {
-		out := make([]uint16, len(in)) // Buffer for short path
-		if n, err := syscall.GetShortPathName(&in[0], &out[0], uint32(len(out))); err == nil {
-			if n <= uint32(len(out)) {
-				return syscall.UTF16ToString(out[:n]), nil
-			}
-			// Buffer was too small, try again with larger buffer
-			out = make([]uint16, n)
-			if _, err = syscall.GetShortPathName(&in[0], &out[0], n); err == nil {
-				return syscall.UTF16ToString(out), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("failed to get short path name")
-}
+
 
 func isMaybeWin83(absPath string) bool {
 	if !strings.Contains(absPath, "~") {

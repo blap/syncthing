@@ -65,8 +65,6 @@ func prepareTmpFile(to fs.Filesystem) (string, error) {
 	return tmpName, nil
 }
 
-var folders = []string{"default"}
-
 var diffTestData = []struct {
 	a string
 	b string

@@ -82,6 +82,19 @@ type OptionsConfiguration struct {
 	ConnectionPriorityQUICWAN          int `json:"connectionPriorityQuicWan" xml:"connectionPriorityQuicWan" default:"40"`
 	ConnectionPriorityRelay            int `json:"connectionPriorityRelay" xml:"connectionPriorityRelay" default:"50"`
 	ConnectionPriorityUpgradeThreshold int `json:"connectionPriorityUpgradeThreshold" xml:"connectionPriorityUpgradeThreshold" default:"0"`
+	
+	// Adaptive keep-alive settings
+	AdaptiveKeepAliveEnabled bool `json:"adaptiveKeepAliveEnabled" xml:"adaptiveKeepAliveEnabled" default:"true"`
+	AdaptiveKeepAliveMinS    int  `json:"adaptiveKeepAliveMinS" xml:"adaptiveKeepAliveMinS" default:"10"`
+	AdaptiveKeepAliveMaxS    int  `json:"adaptiveKeepAliveMaxS" xml:"adaptiveKeepAliveMaxS" default:"60"`
+	
+	// Multipath settings
+	MultipathEnabled bool `json:"multipathEnabled" xml:"multipathEnabled" default:"false"`
+	
+	// Folder priority settings
+	FolderSyncStrategy string `json:"folderSyncStrategy" xml:"folderSyncStrategy" default:"random"`
+	RankTieBreaker     string `json:"rankTieBreaker" xml:"rankTieBreaker" default:"alphabetical"`
+	
 	// Legacy deprecated
 	DeprecatedUPnPEnabled        bool     `json:"-" xml:"upnpEnabled,omitempty"`        // Deprecated: Do not use.
 	DeprecatedUPnPLeaseM         int      `json:"-" xml:"upnpLeaseMinutes,omitempty"`   // Deprecated: Do not use.

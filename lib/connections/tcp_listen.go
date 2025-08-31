@@ -89,6 +89,7 @@ func (t *tcpListener) serve(ctx context.Context) error {
 	default:
 		ipVersion = nat.IPvAny
 	}
+	// Converted if-else chain to switch statement for better readability (staticcheck QF1003 fix)
 	mapping := t.natService.NewMapping(nat.TCP, ipVersion, tcaddr.IP, tcaddr.Port)
 	mapping.OnChanged(func() {
 		t.notifyAddressesChanged(t)

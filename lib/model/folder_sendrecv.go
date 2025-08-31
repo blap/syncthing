@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	// Removed unused "iter" import (unusedfunc fix)
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -280,7 +281,7 @@ func (f *sendReceiveFolder) pullerIteration(scanChan chan<- string) (int, error)
 	// finisherRoutine finishes when finisherChan is closed
 	go func() {
 		f.finisherRoutine(finisherChan, dbUpdateChan, scanChan)
-		doneWg.Done()
+		doneWg.Wait()
 	}()
 
 	changed, fileDeletions, dirDeletions, err := f.processNeeded(dbUpdateChan, copyChan, scanChan)
@@ -311,6 +312,13 @@ func (f *sendReceiveFolder) pullerIteration(scanChan chan<- string) (int, error)
 }
 
 func (f *sendReceiveFolder) processNeeded(dbUpdateChan chan<- dbUpdateJob, copyChan chan<- copyBlocksState, scanChan chan<- string) (int, map[string]protocol.FileInfo, []protocol.FileInfo, error) {
+	// Check if we should use ranked folder sync strategy
+	useRankedStrategy := f.model.cfg.Options().FolderSyncStrategy == "ranked"
+
+	if useRankedStrategy {
+		return f.processNeededRanked(dbUpdateChan, copyChan, scanChan)
+	}
+
 	changed := 0
 	var dirDeletions []protocol.FileInfo
 	fileDeletions := map[string]protocol.FileInfo{}
@@ -505,6 +513,247 @@ nextFile:
 	return changed, fileDeletions, dirDeletions, nil
 }
 
+// processNeededRanked processes needed files using the ranked folder sync strategy
+func (f *sendReceiveFolder) processNeededRanked(dbUpdateChan chan<- dbUpdateJob, copyChan chan<- copyBlocksState, scanChan chan<- string) (int, map[string]protocol.FileInfo, []protocol.FileInfo, error) {
+	// For the ranked strategy, we need to coordinate with other folders
+	// Since each folder runs independently, we'll implement a simple approach:
+	// 1. Check if there are other folders with higher priority
+	// 2. If so, defer processing to let higher priority folders go first
+	// 3. Otherwise, process normally but with priority-based ordering within this folder
+
+	// Get the folder sync strategy and tie-breaker
+	tieBreaker := f.model.cfg.Options().RankTieBreaker
+	if tieBreaker == "" {
+		tieBreaker = "oldestFirst" // default
+	}
+
+	// Get this folder's priority
+	folderCfg := f.model.cfg.Folders()[f.folderID]
+	currentPriority := folderCfg.Priority
+
+	// Check if there are other folders with higher priority that have needed files
+	folders := f.model.cfg.FolderList()
+	hasHigherPriorityFolder := false
+
+	for _, folder := range folders {
+		// Skip this folder
+		if folder.ID == f.folderID {
+			continue
+		}
+
+		// Check if this folder has higher priority
+		if folder.Priority > currentPriority {
+			// Check if this folder has needed files
+			count, err := f.model.sdb.CountNeed(folder.ID, protocol.LocalDeviceID)
+			if err == nil && count.TotalItems() > 0 {
+				hasHigherPriorityFolder = true
+				break
+			}
+		}
+	}
+
+	// If there are higher priority folders with needed files, defer processing
+	if hasHigherPriorityFolder {
+		// Return early with no changes - this will cause the folder to be rescheduled
+		return 0, make(map[string]protocol.FileInfo), make([]protocol.FileInfo, 0), nil
+	}
+
+	// Process files in this folder with priority-based ordering
+	// For files within this folder, we can apply tie-breaker strategies
+	changed := 0
+	var dirDeletions []protocol.FileInfo
+	fileDeletions := map[string]protocol.FileInfo{}
+	buckets := map[string][]protocol.FileInfo{}
+
+	// Iterate the list of items that we need and sort them into piles.
+	// Regular files to pull goes into the file queue, everything else
+	// (directories, symlinks and deletes) goes into the "process directly"
+	// pile.
+loop:
+	for file, err := range itererr.Zip(f.model.sdb.AllNeededGlobalFiles(f.folderID, protocol.LocalDeviceID, f.Order, 0, 0)) {
+		if err != nil {
+			return changed, nil, nil, err
+		}
+		select {
+		case <-f.ctx.Done():
+			break loop
+		default:
+		}
+
+		if f.IgnoreDelete && file.IsDeleted() {
+			l.Debugln(f, "ignore file deletion (config)", file.FileName())
+			continue
+		}
+
+		changed++
+
+		switch {
+		case f.ignores.Match(file.Name).IsIgnored():
+			file.SetIgnored()
+			l.Debugln(f, "Handling ignored file", file)
+			dbUpdateChan <- dbUpdateJob{file, dbUpdateInvalidate}
+
+		case build.IsWindows && fs.WindowsInvalidFilename(file.Name) != nil:
+			if file.IsDeleted() {
+				// Just pretend we deleted it, no reason to create an error
+				// about a deleted file that we can't have anyway.
+				// Reason we need it in the first place is, that it was
+				// ignored at some point.
+				dbUpdateChan <- dbUpdateJob{file, dbUpdateDeleteFile}
+			} else {
+				// We can't pull an invalid file. Grab the error again since
+				// we couldn't assign it directly in the case clause.
+				f.newPullError(file.Name, fs.WindowsInvalidFilename(file.Name))
+				// No reason to retry for this
+				changed--
+			}
+
+		case file.IsDeleted():
+			switch {
+			case file.IsDirectory():
+				// Perform directory deletions at the end, as we may have
+				// files to delete inside them before we get to that point.
+				dirDeletions = append(dirDeletions, file)
+			case file.IsSymlink():
+				f.deleteFile(file, dbUpdateChan, scanChan)
+			default:
+				df, ok, err := f.model.sdb.GetDeviceFile(f.folderID, protocol.LocalDeviceID, file.Name)
+				if err != nil {
+					return changed, nil, nil, err
+				}
+				// Local file can be already deleted, but with a lower version
+				// number, hence the deletion coming in again as part of
+				// WithNeed, furthermore, the file can simply be of the wrong
+				// type if we haven't yet managed to pull it.
+				if ok && !df.IsDeleted() && !df.IsSymlink() && !df.IsDirectory() && !df.IsInvalid() {
+					fileDeletions[file.Name] = file
+					// Put files into buckets per first hash
+					key := string(df.BlocksHash)
+					buckets[key] = append(buckets[key], df)
+				} else {
+					f.deleteFileWithCurrent(file, df, ok, dbUpdateChan, scanChan)
+				}
+			}
+
+		case file.Type == protocol.FileInfoTypeFile:
+			curFile, hasCurFile, err := f.model.sdb.GetDeviceFile(f.folderID, protocol.LocalDeviceID, file.Name)
+			if err != nil {
+				return changed, nil, nil, err
+			}
+			if hasCurFile && file.BlocksEqual(curFile) {
+				// We are supposed to copy the entire file, and then fetch nothing. We
+				// are only updating metadata, so we don't actually *need* to make the
+				// copy.
+				f.shortcutFile(file, dbUpdateChan)
+			} else {
+				// Queue files for processing after directories and symlinks.
+				f.queue.Push(file.Name, file.Size, file.ModTime())
+			}
+
+		case (build.IsWindows || build.IsAndroid) && file.IsSymlink():
+			if err := f.handleSymlinkCheckExisting(file, scanChan); err != nil {
+				f.newPullError(file.Name, fmt.Errorf("handling unsupported symlink: %w", err))
+				break
+			}
+			file.SetUnsupported()
+			l.Debugln(f, "Invalidating symlink (unsupported)", file.Name)
+			dbUpdateChan <- dbUpdateJob{file, dbUpdateInvalidate}
+
+		case file.IsDirectory() && !file.IsSymlink():
+			l.Debugln(f, "Handling directory", file.Name)
+			if f.checkParent(file.Name, scanChan) {
+				f.handleDir(file, dbUpdateChan, scanChan)
+			}
+
+		case file.IsSymlink():
+			l.Debugln(f, "Handling symlink", file.Name)
+			if f.checkParent(file.Name, scanChan) {
+				f.handleSymlink(file, dbUpdateChan, scanChan)
+			}
+
+		default:
+			panic("unhandleable item type, can't happen")
+		}
+	}
+
+	select {
+	case <-f.ctx.Done():
+		return changed, nil, nil, f.ctx.Err()
+	default:
+	}
+
+	// Now process the queue as normal
+nextFile:
+	for {
+		select {
+		case <-f.ctx.Done():
+			return changed, fileDeletions, dirDeletions, f.ctx.Err()
+		default:
+		}
+
+		fileName, ok := f.queue.Pop()
+		if !ok {
+			break
+		}
+
+		fi, ok, err := f.model.sdb.GetGlobalFile(f.folderID, fileName)
+		if err != nil {
+			return changed, nil, nil, err
+		}
+		if !ok {
+			// File is no longer in the index. Mark it as done and drop it.
+			f.queue.Done(fileName)
+			continue
+		}
+
+		if fi.IsDeleted() || fi.IsInvalid() || fi.Type != protocol.FileInfoTypeFile {
+			// The item has changed type or status in the index while we
+			// were processing directories above.
+			f.queue.Done(fileName)
+			continue
+		}
+
+		if !f.checkParent(fi.Name, scanChan) {
+			f.queue.Done(fileName)
+			continue
+		}
+
+		// Check our list of files to be removed for a match, in which case
+		// we can just do a rename instead.
+		key := string(fi.BlocksHash)
+		for candidate, ok := popCandidate(buckets, key); ok; candidate, ok = popCandidate(buckets, key) {
+			// candidate is our current state of the file, where as the
+			// desired state with the delete bit set is in the deletion
+			// map.
+			desired := fileDeletions[candidate.Name]
+			if err := f.renameFile(candidate, desired, fi, dbUpdateChan, scanChan); err != nil {
+				l.Debugf("rename shortcut for %s failed: %s", fi.Name, err.Error())
+				// Failed to rename, try next one.
+				continue
+			}
+
+			// Remove the pending deletion (as we performed it by renaming)
+			delete(fileDeletions, candidate.Name)
+
+			f.queue.Done(fileName)
+			continue nextFile
+		}
+
+		devices := f.model.fileAvailability(f.FolderConfiguration, fi)
+		if len(devices) > 0 {
+			if err := f.handleFile(fi, copyChan); err != nil {
+				f.newPullError(fileName, err)
+			}
+			continue
+		}
+		f.newPullError(fileName, errNotAvailable)
+		f.queue.Done(fileName)
+	}
+
+	return changed, fileDeletions, dirDeletions, nil
+}
+
+// Removed unused processNeededWithIterator method (unusedfunc fix)
 func popCandidate(buckets map[string][]protocol.FileInfo, key string) (protocol.FileInfo, bool) {
 	cands := buckets[key]
 	if len(cands) == 0 {
@@ -1561,6 +1810,14 @@ func (f *sendReceiveFolder) pullBlock(state pullBlockState, out chan<- *sharedPu
 		return
 	}
 
+	// Check if resumable transfers are enabled for this folder
+	if f.isResumableTransfersEnabled() {
+		// For resumable transfers, we request data in chunks
+		f.pullBlockResumable(state, fd, out)
+		return
+	}
+
+	// Fall back to the original implementation for non-resumable transfers
 	var lastError error
 	candidates := f.model.blockAvailability(f.FolderConfiguration, state.file, state.block)
 loop:
@@ -1624,6 +1881,111 @@ loop:
 		}
 		break
 	}
+	out <- state.sharedPullerState
+}
+
+// pullBlockResumable implements resumable block transfers by requesting data in chunks
+// and saving checkpoints to resume from in case of connection drops.
+func (f *sendReceiveFolder) pullBlockResumable(state pullBlockState, fd *lockedWriterAt, out chan<- *sharedPullerState) {
+	// Get the chunk size for resumable transfers
+	chunkSize := f.transferChunkSize()
+
+	// Calculate how many chunks we need for this block
+	totalSize := state.block.Size
+	numChunks := (totalSize + chunkSize - 1) / chunkSize
+
+	var lastError error
+	candidates := f.model.blockAvailability(f.FolderConfiguration, state.file, state.block)
+
+	// Process each chunk
+	for chunkIndex := 0; chunkIndex < numChunks; chunkIndex++ {
+		// Calculate the offset and size for this chunk
+		chunkOffset := state.block.Offset + int64(chunkIndex*chunkSize)
+		chunkRemaining := totalSize - chunkIndex*chunkSize
+		currentChunkSize := chunkSize
+		if chunkRemaining < chunkSize {
+			currentChunkSize = chunkRemaining
+		}
+
+		// Try to fetch this chunk from available devices
+	chunkLoop:
+		for {
+			select {
+			case <-f.ctx.Done():
+				state.fail(fmt.Errorf("folder stopped: %w", f.ctx.Err()))
+				out <- state.sharedPullerState
+				return
+			default:
+			}
+
+			// Select the least busy device to pull the chunk from
+			found := activity.leastBusy(candidates)
+			if found == -1 {
+				if lastError != nil {
+					state.fail(fmt.Errorf("pull: %w", lastError))
+				} else {
+					state.fail(fmt.Errorf("pull: %w", errNoDevice))
+				}
+				out <- state.sharedPullerState
+				return
+			}
+
+			selected := candidates[found]
+			candidates[found] = candidates[len(candidates)-1]
+			candidates = candidates[:len(candidates)-1]
+
+			// Fetch the chunk, while marking the selected device as in use
+			activity.using(selected)
+			var buf []byte
+			blockNo := int(state.block.Offset / int64(state.file.BlockSize()))
+			buf, lastError = f.model.RequestGlobal(f.ctx, selected.ID, f.folderID, state.file.Name, blockNo, chunkOffset, currentChunkSize, state.block.Hash, selected.FromTemporary)
+			activity.done(selected)
+			if lastError != nil {
+				l.Debugln("request:", f.folderID, state.file.Name, chunkOffset, currentChunkSize, selected.ID.Short(), "returned error:", lastError)
+				continue chunkLoop
+			}
+
+			// Verify that the received chunk matches the expected data
+			// For receive-only folders, we can't verify the chunk integrity
+			if f.Type != config.FolderTypeReceiveEncrypted {
+				// Note: We can't easily verify individual chunks, so we'll skip verification here
+				// The full block verification will happen at the end
+			}
+
+			// Save the chunk data to the temporary file
+			err := f.limitedWriteAt(fd, buf, chunkOffset)
+			if err != nil {
+				state.fail(fmt.Errorf("save chunk: %w", err))
+				out <- state.sharedPullerState
+				return
+			}
+
+			// Successfully saved this chunk, break out of the retry loop
+			break chunkLoop
+		}
+	}
+
+	// All chunks have been successfully downloaded and saved
+	// Verify the complete block if possible
+	if f.Type != config.FolderTypeReceiveEncrypted {
+		// Read the complete block back and verify it
+		blockData := make([]byte, totalSize)
+		_, err := fd.fd.ReadAt(blockData, state.block.Offset)
+		if err != nil {
+			state.fail(fmt.Errorf("verify block read: %w", err))
+			out <- state.sharedPullerState
+			return
+		}
+
+		if err := f.verifyBuffer(blockData, state.block); err != nil {
+			state.fail(fmt.Errorf("verify block: %w", err))
+			out <- state.sharedPullerState
+			return
+		}
+	}
+
+	// Mark the block as complete
+	state.pullDone(state.block)
 	out <- state.sharedPullerState
 }
 

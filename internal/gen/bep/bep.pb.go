@@ -31,6 +31,8 @@ const (
 	MessageType_MESSAGE_TYPE_DOWNLOAD_PROGRESS MessageType = 5
 	MessageType_MESSAGE_TYPE_PING              MessageType = 6
 	MessageType_MESSAGE_TYPE_CLOSE             MessageType = 7
+	MessageType_MESSAGE_TYPE_QUERY_DEVICE      MessageType = 8
+	MessageType_MESSAGE_TYPE_RESPONSE_DEVICE   MessageType = 9
 )
 
 // Enum value maps for MessageType.
@@ -44,6 +46,8 @@ var (
 		5: "MESSAGE_TYPE_DOWNLOAD_PROGRESS",
 		6: "MESSAGE_TYPE_PING",
 		7: "MESSAGE_TYPE_CLOSE",
+		8: "MESSAGE_TYPE_QUERY_DEVICE",
+		9: "MESSAGE_TYPE_RESPONSE_DEVICE",
 	}
 	MessageType_value = map[string]int32{
 		"MESSAGE_TYPE_CLUSTER_CONFIG":    0,
@@ -54,6 +58,8 @@ var (
 		"MESSAGE_TYPE_DOWNLOAD_PROGRESS": 5,
 		"MESSAGE_TYPE_PING":              6,
 		"MESSAGE_TYPE_CLOSE":             7,
+		"MESSAGE_TYPE_QUERY_DEVICE":      8,
+		"MESSAGE_TYPE_RESPONSE_DEVICE":   9,
 	}
 )
 

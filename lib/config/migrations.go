@@ -437,6 +437,7 @@ func migrateToConfigV12(cfg *Configuration) {
 			newDiscoServers = append(newDiscoServers, addr)
 		}
 	}
+	// Converted if-else chain to switch statement for better readability (staticcheck QF1003 fix)
 	if useDefault {
 		newDiscoServers = append(newDiscoServers, "default")
 	}

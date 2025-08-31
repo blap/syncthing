@@ -1409,3 +1409,20 @@ func (cf cFiler) CurrentFile(file string) (protocol.FileInfo, bool) {
 	}
 	return fi, true
 }
+
+// transferChunkSize returns the configured transfer chunk size in bytes.
+// If not configured, it returns the default value of 1 MiB.
+func (f *folder) transferChunkSize() int {
+	// Get the global transfer chunk size from the model configuration
+	chunkSize := f.model.cfg.Options().TransferChunkSizeBytes
+	if chunkSize <= 0 {
+		// Default to 1 MiB if not configured or invalid
+		return 1048576
+	}
+	return chunkSize
+}
+
+// isResumableTransfersEnabled returns whether resumable transfers are enabled for this folder.
+func (f *folder) isResumableTransfersEnabled() bool {
+	return f.FolderConfiguration.ResumableTransfersEnabled
+}

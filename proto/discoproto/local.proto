@@ -7,3 +7,12 @@ message Announce {
   repeated string addresses = 2;
   int64 instance_id = 3;
 }
+
+message QueryDevice {
+  bytes id = 1;
+}
+
+message ResponseDevice {
+  bytes id = 1;
+  repeated string addresses = 2;
+}

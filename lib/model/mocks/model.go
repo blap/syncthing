@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/syncthing/syncthing/internal/db"
+	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/stats"
@@ -625,6 +626,11 @@ type Model struct {
 	}
 	serveReturnsOnCall map[int]struct {
 		result1 error
+	}
+	SetConnectionsServiceStub        func(connections.Service)
+	setConnectionsServiceMutex       sync.RWMutex
+	setConnectionsServiceArgsForCall []struct {
+		arg1 connections.Service
 	}
 	SetIgnoresStub        func(string, []string) error
 	setIgnoresMutex       sync.RWMutex
@@ -3603,6 +3609,38 @@ func (fake *Model) ServeReturnsOnCall(i int, result1 error) {
 	fake.serveReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *Model) SetConnectionsService(arg1 connections.Service) {
+	fake.setConnectionsServiceMutex.Lock()
+	fake.setConnectionsServiceArgsForCall = append(fake.setConnectionsServiceArgsForCall, struct {
+		arg1 connections.Service
+	}{arg1})
+	stub := fake.SetConnectionsServiceStub
+	fake.recordInvocation("SetConnectionsService", []interface{}{arg1})
+	fake.setConnectionsServiceMutex.Unlock()
+	if stub != nil {
+		fake.SetConnectionsServiceStub(arg1)
+	}
+}
+
+func (fake *Model) SetConnectionsServiceCallCount() int {
+	fake.setConnectionsServiceMutex.RLock()
+	defer fake.setConnectionsServiceMutex.RUnlock()
+	return len(fake.setConnectionsServiceArgsForCall)
+}
+
+func (fake *Model) SetConnectionsServiceCalls(stub func(connections.Service)) {
+	fake.setConnectionsServiceMutex.Lock()
+	defer fake.setConnectionsServiceMutex.Unlock()
+	fake.SetConnectionsServiceStub = stub
+}
+
+func (fake *Model) SetConnectionsServiceArgsForCall(i int) connections.Service {
+	fake.setConnectionsServiceMutex.RLock()
+	defer fake.setConnectionsServiceMutex.RUnlock()
+	argsForCall := fake.setConnectionsServiceArgsForCall[i]
+	return argsForCall.arg1
 }
 
 func (fake *Model) SetIgnores(arg1 string, arg2 []string) error {

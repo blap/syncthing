@@ -237,10 +237,6 @@ func (a *App) startup() error {
 	}
 
 	keyGen := protocol.NewKeyGenerator()
-	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen)
-	a.Internals = newInternals(m)
-
-	a.mainService.Add(m)
 
 	// The TLS configuration is used for both the listening socket and outgoing
 	// connections.
@@ -260,8 +256,22 @@ func (a *App) startup() error {
 	addrLister := &lateAddressLister{}
 
 	connRegistry := registry.New()
-	discoveryManager := discover.NewManager(a.myID, a.cfg, a.cert, a.evLogger, addrLister, connRegistry)
-	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
+
+	// Create the discovery manager first (chicken and egg issue)
+	discoveryManager := discover.NewManager(a.myID, a.cfg, a.cert, a.evLogger, addrLister, connRegistry, nil)
+
+	// Create the model first, before creating the connection service
+	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen, discoveryManager)
+	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, nil, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
+
+	// Now we can properly set the connections service in the discovery manager
+	discoveryManager.SetConnectionsService(connectionsService)
+	a.Internals = newInternals(m)
+
+	a.mainService.Add(m)
+
+	// Set the connections service in the model to enable multipath functionality
+	m.SetConnectionsService(connectionsService)
 
 	addrLister.AddressLister = connectionsService
 

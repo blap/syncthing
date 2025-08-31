@@ -1,4 +1,4 @@
-// Copyright (C) 2016 The Syncthing Authors.
+// Copyright (C) 2014 The Syncthing Authors.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -14,6 +14,7 @@ import (
 
 	"github.com/syncthing/syncthing/internal/db/sqlite"
 	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/discover"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/ignore"
@@ -156,7 +157,7 @@ func newModel(t testing.TB, cfg config.Wrapper, id protocol.DeviceID, protectedF
 	t.Cleanup(func() {
 		mdb.Close()
 	})
-	m := NewModel(cfg, id, mdb, protectedFiles, evLogger, protocol.NewKeyGenerator()).(*model)
+	m := NewModel(cfg, id, mdb, protectedFiles, evLogger, protocol.NewKeyGenerator(), &mockFinder{}).(*model)
 	ctx, cancel := context.WithCancel(context.Background())
 	go evLogger.Serve(ctx)
 	return &testModel{
@@ -374,4 +375,22 @@ func writeFilePerm(t testing.TB, filesystem fs.Filesystem, name string, data []b
 	t.Helper()
 	writeFile(t, filesystem, name, data)
 	must(t, filesystem.Chmod(name, perm))
+}
+
+type mockFinder struct{}
+
+func (f *mockFinder) Lookup(ctx context.Context, deviceID protocol.DeviceID) ([]string, error) {
+	return nil, nil
+}
+
+func (f *mockFinder) Error() error {
+	return nil
+}
+
+func (f *mockFinder) String() string {
+	return "mockFinder"
+}
+
+func (f *mockFinder) Cache() map[protocol.DeviceID]discover.CacheEntry {
+	return make(map[protocol.DeviceID]discover.CacheEntry)
 }

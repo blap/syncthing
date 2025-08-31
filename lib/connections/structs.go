@@ -26,6 +26,13 @@ import (
 	"github.com/syncthing/syncthing/lib/stats"
 )
 
+// The AddressLister answers questions about what addresses we are listening
+// on.
+type AddressLister interface {
+	ExternalAddresses() []string
+	AllAddresses() []string
+}
+
 type tlsConn interface {
 	io.ReadWriteCloser
 	ConnectionState() tls.ConnectionState
@@ -231,6 +238,8 @@ type Model interface {
 	AddConnection(conn protocol.Connection, hello protocol.Hello)
 	OnHello(protocol.DeviceID, net.Addr, protocol.Hello) error
 	DeviceStatistics() (map[protocol.DeviceID]stats.DeviceStatistics, error)
+	// SetConnectionsService sets the connections service for the model to access the PacketScheduler
+	SetConnectionsService(service Service)
 }
 
 type onAddressesChangedNotifier struct {

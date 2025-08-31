@@ -237,8 +237,8 @@ func (c *folderSummaryService) processUpdate(ev events.Event) {
 			data := ev.Data.(map[string]string)
 			deviceID, _ = protocol.DeviceIDFromString(data["id"])
 		} else {
-			data := ev.Data.(ClusterConfigReceivedEventData)
-			deviceID = data.Device
+			data := ev.Data.(map[string]interface{})
+			deviceID, _ = protocol.DeviceIDFromString(data["device"].(string))
 		}
 
 		c.foldersMut.Lock()

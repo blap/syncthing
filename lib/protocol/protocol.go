@@ -89,7 +89,26 @@ type Model interface {
 	Closed(conn Connection, err error)
 	// The peer device sent progress updates for the files it is currently downloading
 	DownloadProgress(conn Connection, p *DownloadProgress) error
+	// Handle QueryDevice messages (optional)
+	// HandleQueryDevice(conn Connection, query *bep.QueryDevice) error
+	// Handle ResponseDevice messages (optional)
+	// HandleResponseDevice(response *bep.ResponseDevice) error
 }
+
+// QueryDeviceHandler is an optional interface that models can implement to handle QueryDevice messages
+// type QueryDeviceHandler interface {
+// 	HandleQueryDevice(query *bep.QueryDevice) error
+// }
+
+// QueryDeviceHandlerWithConn is an optional interface that models can implement to handle QueryDevice messages with connection context
+// type QueryDeviceHandlerWithConn interface {
+// 	HandleQueryDevice(conn Connection, query *bep.QueryDevice) error
+// }
+
+// ResponseDeviceHandler is an optional interface that models can implement to handle ResponseDevice messages
+// type ResponseDeviceHandler interface {
+// 	HandleResponseDevice(response *bep.ResponseDevice) error
+// }
 
 // rawModel is the Model interface, but without the initial Connection
 // parameter. Internal use only.
@@ -100,6 +119,8 @@ type rawModel interface {
 	ClusterConfig(*ClusterConfig) error
 	Closed(err error)
 	DownloadProgress(*DownloadProgress) error
+	// HandleQueryDevice(*bep.QueryDevice) error
+	// HandleResponseDevice(*bep.ResponseDevice) error
 }
 
 type RequestResponse interface {
@@ -136,6 +157,14 @@ type Connection interface {
 	// further by the caller.
 	DownloadProgress(ctx context.Context, dp *DownloadProgress)
 
+	// Send a Query Device message to the peer device to ask for addresses
+	// of a specific device.
+	// QueryDevice(ctx context.Context, query *bep.QueryDevice) error
+
+	// Send a Response Device message to the peer device with addresses
+	// for a specific device.
+	// ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error
+
 	Start()
 	Close(err error)
 	DeviceID() DeviceID
@@ -155,6 +184,44 @@ type ConnectionInfo interface {
 	Crypto() string
 	EstablishedAt() time.Time
 	ConnectionID() string
+}
+
+// HealthMonitorInterface defines the interface for connection health monitoring
+type HealthMonitorInterface interface {
+	// GetInterval returns the current adaptive keep-alive interval
+	GetInterval() time.Duration
+	// RecordLatency records a new latency measurement
+	RecordLatency(latency time.Duration)
+	// Start begins monitoring the connection health
+	Start()
+	// Stop stops monitoring the connection health
+	Stop()
+}
+
+// ConnectionServiceInterface defines the methods needed from the connections service
+type ConnectionServiceInterface interface {
+	GetConnectedDevices() []DeviceID
+	GetConnectionsForDevice(deviceID DeviceID) []Connection
+}
+
+// ConnectionServiceSubsetInterface defines a subset of ConnectionServiceInterface methods
+// needed by the discovery package to avoid circular dependencies
+type ConnectionServiceSubsetInterface interface {
+	GetConnectedDevices() []DeviceID
+	GetConnectionsForDevice(deviceID DeviceID) []Connection
+}
+
+// AddressLister answers questions about what addresses we are listening on.
+type AddressLister interface {
+	ExternalAddresses() []string
+	AllAddresses() []string
+}
+
+// Finder provides lookup services of some kind.
+type Finder interface {
+	Lookup(ctx context.Context, deviceID DeviceID) (address []string, err error)
+	Error() error
+	String() string
 }
 
 type rawConnection struct {
@@ -188,6 +255,10 @@ type rawConnection struct {
 	startStopMut          sync.Mutex // start and stop must be serialized
 
 	loopWG sync.WaitGroup // Need to ensure no leftover routines in testing
+	
+	// Adaptive keep-alive support
+	healthMonitor HealthMonitorInterface
+	pingTimestamp time.Time // Timestamp when last ping was sent
 }
 
 type asyncResult struct {
@@ -214,6 +285,7 @@ const (
 // Should not be modified in production code, just for testing.
 var CloseTimeout = 10 * time.Second
 
+// NewConnection creates a new connection with the given parameters
 func NewConnection(deviceID DeviceID, reader io.Reader, writer io.Writer, closer io.Closer, model Model, connInfo ConnectionInfo, compress Compression, keyGen *KeyGenerator) Connection {
 	// We create the wrapper for the model first, as it needs to be passed
 	// in at the lowest level in the stack. At the end of construction,
@@ -229,6 +301,29 @@ func NewConnection(deviceID DeviceID, reader io.Reader, writer io.Writer, closer
 	// We do the wire format conversion first (outermost) so that the
 	// metadata is in wire format when it reaches the encryption step.
 	rc := newRawConnection(deviceID, reader, writer, closer, em, connInfo, compress)
+	ec := newEncryptedConnection(rc, rc, em.folderKeys, keyGen)
+	wc := wireFormatConnection{ec}
+
+	cwm.conn = wc
+	return wc
+}
+
+// NewConnectionWithHealthMonitor creates a new connection with adaptive keep-alive support
+func NewConnectionWithHealthMonitor(deviceID DeviceID, reader io.Reader, writer io.Writer, closer io.Closer, model Model, connInfo ConnectionInfo, compress Compression, keyGen *KeyGenerator, healthMonitor HealthMonitorInterface) Connection {
+	// We create the wrapper for the model first, as it needs to be passed
+	// in at the lowest level in the stack. At the end of construction,
+	// before returning, we add the connection to cwm so that it can be used
+	// by the model.
+	cwm := &connectionWrappingModel{model: model}
+
+	// Encryption / decryption is first (outermost) before conversion to
+	// native path formats.
+	nm := makeNative(cwm)
+	em := newEncryptedModel(nm, keyGen)
+
+	// We do the wire format conversion first (outermost) so that the
+	// metadata is in wire format when it reaches the encryption step.
+	rc := newRawConnectionWithHealthMonitor(deviceID, reader, writer, closer, em, connInfo, compress, healthMonitor)
 	ec := newEncryptedConnection(rc, rc, em.folderKeys, keyGen)
 	wc := wireFormatConnection{ec}
 
@@ -260,6 +355,34 @@ func newRawConnection(deviceID DeviceID, reader io.Reader, writer io.Writer, clo
 		closed:                make(chan struct{}),
 		compression:           compress,
 		loopWG:                sync.WaitGroup{},
+	}
+}
+
+func newRawConnectionWithHealthMonitor(deviceID DeviceID, reader io.Reader, writer io.Writer, closer io.Closer, receiver rawModel, connInfo ConnectionInfo, compress Compression, healthMonitor HealthMonitorInterface) *rawConnection {
+	idString := deviceID.String()
+	cr := &countingReader{Reader: reader, idString: idString}
+	cw := &countingWriter{Writer: writer, idString: idString}
+	registerDeviceMetrics(idString)
+
+	return &rawConnection{
+		ConnectionInfo:        connInfo,
+		deviceID:              deviceID,
+		idString:              deviceID.String(),
+		model:                 receiver,
+		started:               make(chan struct{}),
+		cr:                    cr,
+		cw:                    cw,
+		closer:                closer,
+		awaiting:              make(map[int]chan asyncResult),
+		inbox:                 make(chan proto.Message),
+		outbox:                make(chan asyncMessage),
+		closeBox:              make(chan asyncMessage),
+		clusterConfigBox:      make(chan *ClusterConfig),
+		dispatcherLoopStopped: make(chan struct{}),
+		closed:                make(chan struct{}),
+		compression:           compress,
+		loopWG:                sync.WaitGroup{},
+		healthMonitor:         healthMonitor,
 	}
 }
 
@@ -397,7 +520,37 @@ func (c *rawConnection) DownloadProgress(ctx context.Context, dp *DownloadProgre
 	c.send(ctx, dp.toWire(), nil)
 }
 
+// QueryDevice sends a QueryDevice message to the peer device
+// func (c *rawConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+// 	select {
+// 	case <-c.closed:
+// 		return ErrClosed
+// 	case <-ctx.Done():
+// 		return ctx.Err()
+// 	default:
+// 	}
+// 	c.send(ctx, query, nil)
+// 	return nil
+// }
+
+// ResponseDevice sends a ResponseDevice message to the peer device
+// func (c *rawConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+// 	select {
+// 	case <-c.closed:
+// 		return ErrClosed
+// 	case <-ctx.Done():
+// 		return ctx.Err()
+// 	default:
+// 	}
+// 	c.send(ctx, response, nil)
+// 	return nil
+// }
+
 func (c *rawConnection) ping() bool {
+	// Record timestamp when ping is sent if we have a health monitor
+	if c.healthMonitor != nil {
+		c.pingTimestamp = time.Now()
+	}
 	return c.send(context.Background(), &bep.Ping{}, nil)
 }
 
@@ -492,6 +645,22 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 
 		case *bep.DownloadProgress:
 			err = c.model.DownloadProgress(downloadProgressFromWire(msg))
+			
+		case *bep.Ping:
+			// Handle ping message - measure latency if we have a health monitor
+			if c.healthMonitor != nil && !c.pingTimestamp.IsZero() {
+				latency := time.Since(c.pingTimestamp)
+				c.healthMonitor.RecordLatency(latency)
+				c.pingTimestamp = time.Time{} // Reset timestamp
+			}
+			
+		// case *bep.QueryDevice:
+		// 	// Handle QueryDevice message
+		// 	err = c.model.HandleQueryDevice(msg)
+			
+		// case *bep.ResponseDevice:
+		// 	// Handle ResponseDevice message
+		// 	err = c.model.HandleResponseDevice(msg)
 		}
 		if err != nil {
 			return newHandleError(err, msgContext)
@@ -884,6 +1053,10 @@ func typeOf(msg proto.Message) bep.MessageType {
 		return bep.MessageType_MESSAGE_TYPE_PING
 	case *bep.Close:
 		return bep.MessageType_MESSAGE_TYPE_CLOSE
+	// case *bep.QueryDevice:
+	// 	return bep.MessageType_MESSAGE_TYPE_QUERY_DEVICE
+	// case *bep.ResponseDevice:
+	// 	return bep.MessageType_MESSAGE_TYPE_RESPONSE_DEVICE
 	default:
 		panic("bug: unknown message type")
 	}
@@ -907,6 +1080,10 @@ func newMessage(t bep.MessageType) (proto.Message, error) {
 		return new(bep.Ping), nil
 	case bep.MessageType_MESSAGE_TYPE_CLOSE:
 		return new(bep.Close), nil
+	// case bep.MessageType_MESSAGE_TYPE_QUERY_DEVICE:
+	// 	return new(bep.QueryDevice), nil
+	// case bep.MessageType_MESSAGE_TYPE_RESPONSE_DEVICE:
+	// 	return new(bep.ResponseDevice), nil
 	default:
 		return nil, errUnknownMessage
 	}
@@ -997,20 +1174,47 @@ func (c *rawConnection) internalClose(err error) {
 // results in an effecting ping interval of somewhere between
 // PingSendInterval/2 and PingSendInterval.
 func (c *rawConnection) pingSender() {
-	ticker := time.NewTicker(PingSendInterval / 2)
+	// Determine the interval to use
+	var interval time.Duration
+	if c.healthMonitor != nil {
+		// Use adaptive interval from health monitor
+		interval = c.healthMonitor.GetInterval()
+	} else {
+		// Use fixed interval
+		interval = PingSendInterval
+	}
+	
+	ticker := time.NewTicker(interval / 2)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
 			d := time.Since(c.cw.Last())
-			if d < PingSendInterval/2 {
+			if d < interval/2 {
 				l.Debugln(c.deviceID, "ping skipped after wr", d)
+				// Update ticker with potentially new interval
+				if c.healthMonitor != nil {
+					newInterval := c.healthMonitor.GetInterval()
+					if newInterval != interval {
+						interval = newInterval
+						ticker.Reset(interval / 2)
+					}
+				}
 				continue
 			}
 
 			l.Debugln(c.deviceID, "ping -> after", d)
 			c.ping()
+			
+			// Update ticker with potentially new interval after sending ping
+			if c.healthMonitor != nil {
+				newInterval := c.healthMonitor.GetInterval()
+				if newInterval != interval {
+					interval = newInterval
+					ticker.Reset(interval / 2)
+				}
+			}
 
 		case <-c.closed:
 			return
@@ -1111,6 +1315,10 @@ func messageContext(msg proto.Message) (string, error) {
 		return "ping", nil
 	case *bep.Close:
 		return "close", nil
+	// case *bep.QueryDevice:
+	// 	return "query-device", nil
+	// case *bep.ResponseDevice:
+	// 	return "response-device", nil
 	default:
 		return "", errors.New("unknown or empty message")
 	}
@@ -1165,3 +1373,37 @@ func (c *connectionWrappingModel) Closed(err error) {
 func (c *connectionWrappingModel) DownloadProgress(p *DownloadProgress) error {
 	return c.model.DownloadProgress(c.conn, p)
 }
+
+// HandleQueryDevice handles QueryDevice messages by calling the model's HandleQueryDevice method if it implements QueryDeviceHandler
+// func (c *connectionWrappingModel) HandleQueryDevice(query *bep.QueryDevice) error {
+// 	// First check if the model implements the new interface with connection parameter
+// 	if handler, ok := c.model.(QueryDeviceHandlerWithConn); ok {
+// 		return handler.HandleQueryDevice(c.conn, query)
+// 	}
+// 	
+// 	// Fall back to the old interface without connection parameter
+// 	if handler, ok := c.model.(QueryDeviceHandler); ok {
+// 		return handler.HandleQueryDevice(query)
+// 	}
+// 	
+// 	// Also check the main Model interface
+// 	if handler, ok := c.model.(interface{ HandleQueryDevice(Connection, *bep.QueryDevice) error }); ok {
+// 		return handler.HandleQueryDevice(c.conn, query)
+// 	}
+// 	
+// 	return nil
+// }
+
+// HandleResponseDevice handles ResponseDevice messages by calling the model's HandleResponseDevice method if it implements ResponseDeviceHandler
+// func (c *connectionWrappingModel) HandleResponseDevice(response *bep.ResponseDevice) error {
+// 	if handler, ok := c.model.(ResponseDeviceHandler); ok {
+// 		return handler.HandleResponseDevice(response)
+// 	}
+// 	
+// 	// Also check the main Model interface
+// 	if handler, ok := c.model.(interface{ HandleResponseDevice(*bep.ResponseDevice) error }); ok {
+// 		return handler.HandleResponseDevice(response)
+// 	}
+// 	
+// 	return nil
+// }

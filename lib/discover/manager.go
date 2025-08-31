@@ -21,6 +21,7 @@ import (
 
 	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/config"
+
 	"github.com/syncthing/syncthing/lib/connections/registry"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -37,6 +38,7 @@ import (
 type Manager interface {
 	FinderService
 	ChildErrors() map[string]error
+	SetConnectionsService(connSvc protocol.ConnectionServiceSubsetInterface)
 }
 
 type manager struct {
@@ -47,12 +49,16 @@ type manager struct {
 	evLogger      events.Logger
 	addressLister AddressLister
 	registry      *registry.Registry
+	connSvc       protocol.ConnectionServiceSubsetInterface
 
 	finders map[string]cachedFinder
 	mut     sync.RWMutex
+	
+	// Connection cache for storing successful direct connections
+	connectionCache *connectionCache
 }
 
-func NewManager(myID protocol.DeviceID, cfg config.Wrapper, cert tls.Certificate, evLogger events.Logger, lister AddressLister, registry *registry.Registry) Manager {
+func NewManager(myID protocol.DeviceID, cfg config.Wrapper, cert tls.Certificate, evLogger events.Logger, lister AddressLister, registry *registry.Registry, connSvc protocol.ConnectionServiceSubsetInterface) Manager {
 	m := &manager{
 		Supervisor:    suture.New("discover.Manager", svcutil.SpecWithDebugLogger()),
 		myID:          myID,
@@ -61,8 +67,12 @@ func NewManager(myID protocol.DeviceID, cfg config.Wrapper, cert tls.Certificate
 		evLogger:      evLogger,
 		addressLister: lister,
 		registry:      registry,
+		connSvc:       connSvc,
 
 		finders: make(map[string]cachedFinder),
+		
+		// Create a connection cache with 60 minutes TTL
+		connectionCache: newConnectionCache(60 * time.Minute),
 	}
 	m.Add(svcutil.AsService(m.serve, m.String()))
 	return m
@@ -110,6 +120,14 @@ func (m *manager) removeLocked(identity string) {
 // Lookup attempts to resolve the device ID using any of the added Finders,
 // while obeying the cache settings.
 func (m *manager) Lookup(ctx context.Context, deviceID protocol.DeviceID) (addresses []string, err error) {
+	// First, check our connection cache for recently successful connections
+	if m.cfg.Options().DiscoveryCacheEnabled {
+		if cachedAddresses, found := m.connectionCache.Get(deviceID); found {
+			slog.DebugContext(ctx, "Found device in connection cache", "device", deviceID)
+			return cachedAddresses, nil
+		}
+	}
+
 	m.mut.RLock()
 	for _, finder := range m.finders {
 		if cacheEntry, ok := finder.cache.Get(deviceID); ok {
@@ -227,6 +245,21 @@ func (m *manager) Cache() map[protocol.DeviceID]CacheEntry {
 	return res
 }
 
+// SetConnectionsService updates the connections service
+func (m *manager) SetConnectionsService(connSvc protocol.ConnectionServiceSubsetInterface) {
+	m.connSvc = connSvc
+}
+
+// AddConnectionToCache adds a successful connection to the connection cache
+func (m *manager) AddConnectionToCache(deviceID protocol.DeviceID, addresses []string) {
+	if !m.cfg.Options().DiscoveryCacheEnabled {
+		return
+	}
+	
+	m.connectionCache.Add(deviceID, addresses)
+	slog.Debug("Added connection to cache", "device", deviceID, "addresses", addresses)
+}
+
 func (m *manager) CommitConfiguration(_, to config.Configuration) (handled bool) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
@@ -240,6 +273,12 @@ func (m *manager) CommitConfiguration(_, to config.Configuration) (handled bool)
 	if to.Options.LocalAnnEnabled {
 		toIdentities[ipv4Identity(to.Options.LocalAnnPort)] = struct{}{}
 		toIdentities[ipv6Identity(to.Options.LocalAnnMCAddr)] = struct{}{}
+	}
+
+	// Add peer-assisted discovery if enabled
+	const peerAssistedIdentity = "peer-assisted"
+	if to.Options.PeerAssistedDiscoveryEnabled && m.connSvc != nil {
+		toIdentities[peerAssistedIdentity] = struct{}{}
 	}
 
 	// Remove things that we're not expected to have.
@@ -291,6 +330,15 @@ func (m *manager) CommitConfiguration(_, to config.Configuration) (handled bool)
 			} else {
 				m.addLocked(v6Identity, mcd, 0, 0)
 			}
+		}
+	}
+
+	// Add peer-assisted discovery if enabled
+	if to.Options.PeerAssistedDiscoveryEnabled && m.connSvc != nil {
+		if _, ok := m.finders[peerAssistedIdentity]; !ok {
+			pad := NewPeerAssistedDiscovery(m.myID, m, m.evLogger, m.connSvc)
+			// Peer-assisted discovery doesn't need caching as it's real-time
+			m.addLocked(peerAssistedIdentity, pad, 0, 0)
 		}
 	}
 

@@ -65,6 +65,11 @@ type Manager struct {
 	serveReturnsOnCall map[int]struct {
 		result1 error
 	}
+	SetConnectionsServiceStub        func(protocol.ConnectionServiceSubsetInterface)
+	setConnectionsServiceMutex       sync.RWMutex
+	setConnectionsServiceArgsForCall []struct {
+		arg1 protocol.ConnectionServiceSubsetInterface
+	}
 	StringStub        func() string
 	stringMutex       sync.RWMutex
 	stringArgsForCall []struct {
@@ -362,6 +367,38 @@ func (fake *Manager) ServeReturnsOnCall(i int, result1 error) {
 	fake.serveReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *Manager) SetConnectionsService(arg1 protocol.ConnectionServiceSubsetInterface) {
+	fake.setConnectionsServiceMutex.Lock()
+	fake.setConnectionsServiceArgsForCall = append(fake.setConnectionsServiceArgsForCall, struct {
+		arg1 protocol.ConnectionServiceSubsetInterface
+	}{arg1})
+	stub := fake.SetConnectionsServiceStub
+	fake.recordInvocation("SetConnectionsService", []interface{}{arg1})
+	fake.setConnectionsServiceMutex.Unlock()
+	if stub != nil {
+		fake.SetConnectionsServiceStub(arg1)
+	}
+}
+
+func (fake *Manager) SetConnectionsServiceCallCount() int {
+	fake.setConnectionsServiceMutex.RLock()
+	defer fake.setConnectionsServiceMutex.RUnlock()
+	return len(fake.setConnectionsServiceArgsForCall)
+}
+
+func (fake *Manager) SetConnectionsServiceCalls(stub func(protocol.ConnectionServiceSubsetInterface)) {
+	fake.setConnectionsServiceMutex.Lock()
+	defer fake.setConnectionsServiceMutex.Unlock()
+	fake.SetConnectionsServiceStub = stub
+}
+
+func (fake *Manager) SetConnectionsServiceArgsForCall(i int) protocol.ConnectionServiceSubsetInterface {
+	fake.setConnectionsServiceMutex.RLock()
+	defer fake.setConnectionsServiceMutex.RUnlock()
+	argsForCall := fake.setConnectionsServiceArgsForCall[i]
+	return argsForCall.arg1
 }
 
 func (fake *Manager) String() string {

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/syncthing/syncthing/lib/connections"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 type Service struct {
@@ -39,6 +40,27 @@ type Service struct {
 	externalAddressesReturnsOnCall map[int]struct {
 		result1 []string
 	}
+	GetConnectedDevicesStub        func() []protocol.DeviceID
+	getConnectedDevicesMutex       sync.RWMutex
+	getConnectedDevicesArgsForCall []struct {
+	}
+	getConnectedDevicesReturns struct {
+		result1 []protocol.DeviceID
+	}
+	getConnectedDevicesReturnsOnCall map[int]struct {
+		result1 []protocol.DeviceID
+	}
+	GetConnectionsForDeviceStub        func(protocol.DeviceID) []protocol.Connection
+	getConnectionsForDeviceMutex       sync.RWMutex
+	getConnectionsForDeviceArgsForCall []struct {
+		arg1 protocol.DeviceID
+	}
+	getConnectionsForDeviceReturns struct {
+		result1 []protocol.Connection
+	}
+	getConnectionsForDeviceReturnsOnCall map[int]struct {
+		result1 []protocol.Connection
+	}
 	ListenerStatusStub        func() map[string]connections.ListenerStatusEntry
 	listenerStatusMutex       sync.RWMutex
 	listenerStatusArgsForCall []struct {
@@ -58,6 +80,16 @@ type Service struct {
 	}
 	nATTypeReturnsOnCall map[int]struct {
 		result1 string
+	}
+	PacketSchedulerStub        func() *connections.PacketScheduler
+	packetSchedulerMutex       sync.RWMutex
+	packetSchedulerArgsForCall []struct {
+	}
+	packetSchedulerReturns struct {
+		result1 *connections.PacketScheduler
+	}
+	packetSchedulerReturnsOnCall map[int]struct {
+		result1 *connections.PacketScheduler
 	}
 	ServeStub        func(context.Context) error
 	serveMutex       sync.RWMutex
@@ -233,6 +265,120 @@ func (fake *Service) ExternalAddressesReturnsOnCall(i int, result1 []string) {
 	}{result1}
 }
 
+func (fake *Service) GetConnectedDevices() []protocol.DeviceID {
+	fake.getConnectedDevicesMutex.Lock()
+	ret, specificReturn := fake.getConnectedDevicesReturnsOnCall[len(fake.getConnectedDevicesArgsForCall)]
+	fake.getConnectedDevicesArgsForCall = append(fake.getConnectedDevicesArgsForCall, struct {
+	}{})
+	stub := fake.GetConnectedDevicesStub
+	fakeReturns := fake.getConnectedDevicesReturns
+	fake.recordInvocation("GetConnectedDevices", []interface{}{})
+	fake.getConnectedDevicesMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Service) GetConnectedDevicesCallCount() int {
+	fake.getConnectedDevicesMutex.RLock()
+	defer fake.getConnectedDevicesMutex.RUnlock()
+	return len(fake.getConnectedDevicesArgsForCall)
+}
+
+func (fake *Service) GetConnectedDevicesCalls(stub func() []protocol.DeviceID) {
+	fake.getConnectedDevicesMutex.Lock()
+	defer fake.getConnectedDevicesMutex.Unlock()
+	fake.GetConnectedDevicesStub = stub
+}
+
+func (fake *Service) GetConnectedDevicesReturns(result1 []protocol.DeviceID) {
+	fake.getConnectedDevicesMutex.Lock()
+	defer fake.getConnectedDevicesMutex.Unlock()
+	fake.GetConnectedDevicesStub = nil
+	fake.getConnectedDevicesReturns = struct {
+		result1 []protocol.DeviceID
+	}{result1}
+}
+
+func (fake *Service) GetConnectedDevicesReturnsOnCall(i int, result1 []protocol.DeviceID) {
+	fake.getConnectedDevicesMutex.Lock()
+	defer fake.getConnectedDevicesMutex.Unlock()
+	fake.GetConnectedDevicesStub = nil
+	if fake.getConnectedDevicesReturnsOnCall == nil {
+		fake.getConnectedDevicesReturnsOnCall = make(map[int]struct {
+			result1 []protocol.DeviceID
+		})
+	}
+	fake.getConnectedDevicesReturnsOnCall[i] = struct {
+		result1 []protocol.DeviceID
+	}{result1}
+}
+
+func (fake *Service) GetConnectionsForDevice(arg1 protocol.DeviceID) []protocol.Connection {
+	fake.getConnectionsForDeviceMutex.Lock()
+	ret, specificReturn := fake.getConnectionsForDeviceReturnsOnCall[len(fake.getConnectionsForDeviceArgsForCall)]
+	fake.getConnectionsForDeviceArgsForCall = append(fake.getConnectionsForDeviceArgsForCall, struct {
+		arg1 protocol.DeviceID
+	}{arg1})
+	stub := fake.GetConnectionsForDeviceStub
+	fakeReturns := fake.getConnectionsForDeviceReturns
+	fake.recordInvocation("GetConnectionsForDevice", []interface{}{arg1})
+	fake.getConnectionsForDeviceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Service) GetConnectionsForDeviceCallCount() int {
+	fake.getConnectionsForDeviceMutex.RLock()
+	defer fake.getConnectionsForDeviceMutex.RUnlock()
+	return len(fake.getConnectionsForDeviceArgsForCall)
+}
+
+func (fake *Service) GetConnectionsForDeviceCalls(stub func(protocol.DeviceID) []protocol.Connection) {
+	fake.getConnectionsForDeviceMutex.Lock()
+	defer fake.getConnectionsForDeviceMutex.Unlock()
+	fake.GetConnectionsForDeviceStub = stub
+}
+
+func (fake *Service) GetConnectionsForDeviceArgsForCall(i int) protocol.DeviceID {
+	fake.getConnectionsForDeviceMutex.RLock()
+	defer fake.getConnectionsForDeviceMutex.RUnlock()
+	argsForCall := fake.getConnectionsForDeviceArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Service) GetConnectionsForDeviceReturns(result1 []protocol.Connection) {
+	fake.getConnectionsForDeviceMutex.Lock()
+	defer fake.getConnectionsForDeviceMutex.Unlock()
+	fake.GetConnectionsForDeviceStub = nil
+	fake.getConnectionsForDeviceReturns = struct {
+		result1 []protocol.Connection
+	}{result1}
+}
+
+func (fake *Service) GetConnectionsForDeviceReturnsOnCall(i int, result1 []protocol.Connection) {
+	fake.getConnectionsForDeviceMutex.Lock()
+	defer fake.getConnectionsForDeviceMutex.Unlock()
+	fake.GetConnectionsForDeviceStub = nil
+	if fake.getConnectionsForDeviceReturnsOnCall == nil {
+		fake.getConnectionsForDeviceReturnsOnCall = make(map[int]struct {
+			result1 []protocol.Connection
+		})
+	}
+	fake.getConnectionsForDeviceReturnsOnCall[i] = struct {
+		result1 []protocol.Connection
+	}{result1}
+}
+
 func (fake *Service) ListenerStatus() map[string]connections.ListenerStatusEntry {
 	fake.listenerStatusMutex.Lock()
 	ret, specificReturn := fake.listenerStatusReturnsOnCall[len(fake.listenerStatusArgsForCall)]
@@ -336,6 +482,59 @@ func (fake *Service) NATTypeReturnsOnCall(i int, result1 string) {
 	}
 	fake.nATTypeReturnsOnCall[i] = struct {
 		result1 string
+	}{result1}
+}
+
+func (fake *Service) PacketScheduler() *connections.PacketScheduler {
+	fake.packetSchedulerMutex.Lock()
+	ret, specificReturn := fake.packetSchedulerReturnsOnCall[len(fake.packetSchedulerArgsForCall)]
+	fake.packetSchedulerArgsForCall = append(fake.packetSchedulerArgsForCall, struct {
+	}{})
+	stub := fake.PacketSchedulerStub
+	fakeReturns := fake.packetSchedulerReturns
+	fake.recordInvocation("PacketScheduler", []interface{}{})
+	fake.packetSchedulerMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Service) PacketSchedulerCallCount() int {
+	fake.packetSchedulerMutex.RLock()
+	defer fake.packetSchedulerMutex.RUnlock()
+	return len(fake.packetSchedulerArgsForCall)
+}
+
+func (fake *Service) PacketSchedulerCalls(stub func() *connections.PacketScheduler) {
+	fake.packetSchedulerMutex.Lock()
+	defer fake.packetSchedulerMutex.Unlock()
+	fake.PacketSchedulerStub = stub
+}
+
+func (fake *Service) PacketSchedulerReturns(result1 *connections.PacketScheduler) {
+	fake.packetSchedulerMutex.Lock()
+	defer fake.packetSchedulerMutex.Unlock()
+	fake.PacketSchedulerStub = nil
+	fake.packetSchedulerReturns = struct {
+		result1 *connections.PacketScheduler
+	}{result1}
+}
+
+func (fake *Service) PacketSchedulerReturnsOnCall(i int, result1 *connections.PacketScheduler) {
+	fake.packetSchedulerMutex.Lock()
+	defer fake.packetSchedulerMutex.Unlock()
+	fake.PacketSchedulerStub = nil
+	if fake.packetSchedulerReturnsOnCall == nil {
+		fake.packetSchedulerReturnsOnCall = make(map[int]struct {
+			result1 *connections.PacketScheduler
+		})
+	}
+	fake.packetSchedulerReturnsOnCall[i] = struct {
+		result1 *connections.PacketScheduler
 	}{result1}
 }
 

@@ -28,6 +28,8 @@ enum MessageType {
   MESSAGE_TYPE_DOWNLOAD_PROGRESS = 5;
   MESSAGE_TYPE_PING = 6;
   MESSAGE_TYPE_CLOSE = 7;
+  MESSAGE_TYPE_QUERY_DEVICE = 8;
+  MESSAGE_TYPE_RESPONSE_DEVICE = 9;
 }
 
 enum MessageCompression {
@@ -250,6 +252,19 @@ message FileDownloadProgressUpdate {
 enum FileDownloadProgressUpdateType {
   FILE_DOWNLOAD_PROGRESS_UPDATE_TYPE_APPEND = 0;
   FILE_DOWNLOAD_PROGRESS_UPDATE_TYPE_FORGET = 1;
+}
+
+// QueryDevice
+
+message QueryDevice {
+  bytes id = 1;
+}
+
+// ResponseDevice
+
+message ResponseDevice {
+  bytes id = 1;
+  repeated string addresses = 2;
 }
 
 // Ping

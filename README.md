@@ -80,6 +80,33 @@ a release or checking out git, you just need to run `go run build.go` and the
 binaries are created in `./bin`. There's [a guide][5] with more details on the
 build process.
 
+## Android Mobile Interface
+
+This repository also contains a native Android application that interfaces with the Syncthing backend through its REST API.
+
+### Building the Android App
+
+```bash
+cd android
+./gradlew build
+```
+
+### Development
+
+The Android app uses the same REST API as the web interface. When updating the desktop version, make sure to update the corresponding API endpoints in the Android app if needed.
+
+#### Shared Constants
+
+API endpoints and configuration constants are shared between desktop and mobile versions through `lib/api/constants.go`. This ensures that both versions stay in sync when APIs change.
+
+#### Development Workflow
+
+1. Make API changes in desktop version
+2. Update shared constants in `lib/api/constants.go` if needed
+3. Update Android app to use new APIs
+4. Test both desktop and Android together
+5. Release both versions simultaneously
+
 ## Signed Releases
 
 Release binaries are GPG signed with the key available from

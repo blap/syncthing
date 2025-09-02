@@ -1,31 +1,48 @@
 @echo off
-REM Simple script to build Syncthing with CGO-enabled SQLite driver
-REM This builds a binary that actually enables CGO but avoids the console panic issue
-REM For more information, see docs/windows-cgo-build-guide.md
-
 setlocal
 
-REM Set version from command line argument or use default
-if "%1"=="" (
-    set VERSION=v2.0.3
-) else (
-    set VERSION=%1
-)
-
-echo Building Syncthing with CGO-enabled SQLite driver...
-echo Version: %VERSION%
+set VERSION=v2.0.4
+echo Building Syncthing version: %VERSION%
 
 set CGO_ENABLED=1
-REM Clear CC to let Go find the compiler automatically
-set CC=
-go build -tags forcecgo -ldflags "-X github.com/syncthing/syncthing/lib/build.Version=%VERSION%" -o bin\syncthing-cgo.exe github.com/syncthing/syncthing/cmd/syncthing
+set CC=x86_64-w64-mingw32-gcc
+
+echo CGO_ENABLED=%CGO_ENABLED%
+echo CC=%CC%
+
+REM Check if goversioninfo is available
+where goversioninfo >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo goversioninfo not found, installing...
+    go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+    if %ERRORLEVEL% NEQ 0 (
+        echo Failed to install goversioninfo. Windows binaries will not have file information encoded.
+    )
+)
+
+REM Check if logo.ico exists
+if not exist "assets\logo.ico" (
+    echo Warning: assets\logo.ico not found. Windows binaries will not have an icon.
+)
+
+if not exist "bin" mkdir bin
+
+REM Build Syncthing using build.go script which will handle icon embedding
+echo Building Syncthing with embedded resources using build.go...
+echo Using CGO_ENABLED=%CGO_ENABLED% and CC=%CC%
+go run build.go -goos windows -goarch amd64 -force-cgo -tags forcecgo build syncthing
 
 if %ERRORLEVEL% EQU 0 (
-    echo Build successful! Binary created at bin\syncthing-cgo.exe
-    echo Testing the binary...
-    bin\syncthing-cgo.exe --version
+    echo Build successful!
+    if exist "syncthing.exe" (
+        move "syncthing.exe" "bin\syncthing-cgo.exe"
+        bin\syncthing-cgo.exe --version
+    ) else (
+        echo Executable not found in current directory
+    )
 ) else (
-    echo Build failed!
-    echo For more information, see docs/windows-cgo-build-guide.md
+    echo Build failed with error code %ERRORLEVEL%!
     exit /b %ERRORLEVEL%
 )
+
+exit /b 0

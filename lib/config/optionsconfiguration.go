@@ -95,6 +95,13 @@ type OptionsConfiguration struct {
 	FolderSyncStrategy string `json:"folderSyncStrategy" xml:"folderSyncStrategy" default:"random"`
 	RankTieBreaker     string `json:"rankTieBreaker" xml:"rankTieBreaker" default:"alphabetical"`
 	
+	// Discovery cache settings
+	DiscoveryCacheEnabled       bool `json:"discoveryCacheEnabled" xml:"discoveryCacheEnabled" default:"false"`
+	PeerAssistedDiscoveryEnabled bool `json:"peerAssistedDiscoveryEnabled" xml:"peerAssistedDiscoveryEnabled" default:"false"`
+	
+	// Transfer settings
+	TransferChunkSizeBytes int `json:"transferChunkSizeBytes" xml:"transferChunkSizeBytes" default:"1048576"`
+	
 	// Legacy deprecated
 	DeprecatedUPnPEnabled        bool     `json:"-" xml:"upnpEnabled,omitempty"`        // Deprecated: Do not use.
 	DeprecatedUPnPLeaseM         int      `json:"-" xml:"upnpLeaseMinutes,omitempty"`   // Deprecated: Do not use.

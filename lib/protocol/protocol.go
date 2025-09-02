@@ -1297,6 +1297,7 @@ func newHandleError(err error, msgContext string) error {
 	return fmt.Errorf("handling %v: %w", msgContext, err)
 }
 
+// messageContext returns a human readable representation of a message
 func messageContext(msg proto.Message) (string, error) {
 	switch msg := msg.(type) {
 	case *bep.ClusterConfig:
@@ -1324,23 +1325,7 @@ func messageContext(msg proto.Message) (string, error) {
 	}
 }
 
-// HealthMonitorInterface defines the interface for health monitoring functionality
-type HealthMonitorInterface interface {
-	RecordLatency(latency time.Duration)
-	RecordPacketLoss(lossPercent float64)
-	GetInterval() time.Duration
-	GetHealthScore() float64
-	IsHealthy() bool
-}
 
-// ConnectionServiceSubsetInterface defines a subset of connection service functionality
-type ConnectionServiceSubsetInterface interface {
-	Connections() []Connection
-	Connection(DeviceID) (Connection, bool)
-	Connect(DeviceID) bool
-	GetConnectedDevices() []DeviceID
-	GetConnectionsForDevice(device DeviceID) []Connection
-}
 
 // connectionWrappingModel takes the Model interface from the model package,
 // which expects the Connection as the first parameter in all methods, and

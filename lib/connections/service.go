@@ -131,6 +131,9 @@ type Service interface {
 	ListenerStatus() map[string]ListenerStatusEntry
 	ConnectionStatus() map[string]ConnectionStatusEntry
 	NATType() string
+	PacketScheduler() *PacketScheduler
+	GetConnectedDevices() []protocol.DeviceID
+	GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol.Connection
 }
 
 type ListenerStatusEntry struct {
@@ -180,6 +183,8 @@ type service struct {
 	listenersMut   sync.RWMutex
 	listeners      map[string]genericListener
 	listenerTokens map[string]suture.ServiceToken
+
+	packetScheduler *PacketScheduler
 }
 
 func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *tls.Config, discoverer discover.Finder, bepProtocolName string, tlsDefaultCommonName string, evLogger events.Logger, registry *registry.Registry, keyGen *protocol.KeyGenerator) Service {
@@ -209,6 +214,8 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 
 		listeners:      make(map[string]genericListener),
 		listenerTokens: make(map[string]suture.ServiceToken),
+
+		packetScheduler: NewPacketScheduler(),
 	}
 	cfg.Subscribe(service)
 
@@ -925,6 +932,23 @@ func (s *service) scheduleDialNow() {
 	default:
 		// channel is blocked - a config update is already pending for the connection loop.
 	}
+}
+
+// PacketScheduler returns the packet scheduler for multipath connections
+func (s *service) PacketScheduler() *PacketScheduler {
+	return s.packetScheduler
+}
+
+// GetConnectedDevices returns a list of all currently connected devices
+func (s *service) GetConnectedDevices() []protocol.DeviceID {
+	// TODO: Implement this method
+	return nil
+}
+
+// GetConnectionsForDevice returns all connections for a specific device
+func (s *service) GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol.Connection {
+	// TODO: Implement this method
+	return nil
 }
 
 func (s *service) AllAddresses() []string {

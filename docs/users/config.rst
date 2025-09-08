@@ -10,7 +10,7 @@ Overview
 This page covers how to configure Syncthing for file synchronization, including device setup, folder configuration, connection settings, and various configuration methods through the web GUI, command-line, or direct file editing.
 
 Configuration File Locations
----------------------------
+----------------------------
 
 The default configuration and database directory locations are:
 
@@ -133,7 +133,7 @@ and responsive to real-time network conditions.
             <markerName>.stfolder</markerName>
             <copyOwnershipFromParent>false</copyOwnershipFromParent>
             <modTimeWindowS>0</modTimeWindowS>
-            <maxConcurrentWrites>2</maxConcurrentWrites>
+            <maxConcurrentWrites>16</maxConcurrentWrites>
             <disableFsync>false</disableFsync>
             <blockPullOrder>standard</blockPullOrder>
             <copyRangeMethod>standard</copyRangeMethod>
@@ -239,7 +239,7 @@ and responsive to real-time network conditions.
                 <markerName>.stfolder</markerName>
                 <copyOwnershipFromParent>false</copyOwnershipFromParent>
                 <modTimeWindowS>0</modTimeWindowS>
-                <maxConcurrentWrites>2</maxConcurrentWrites>
+                <maxConcurrentWrites>16</maxConcurrentWrites>
                 <disableFsync>false</disableFsync>
                 <blockPullOrder>standard</blockPullOrder>
                 <copyRangeMethod>standard</copyRangeMethod>
@@ -325,7 +325,7 @@ Folder Element
         <markerName>.stfolder</markerName>
         <copyOwnershipFromParent>false</copyOwnershipFromParent>
         <modTimeWindowS>0</modTimeWindowS>
-        <maxConcurrentWrites>2</maxConcurrentWrites>
+        <maxConcurrentWrites>16</maxConcurrentWrites>
         <disableFsync>false</disableFsync>
         <blockPullOrder>standard</blockPullOrder>
         <copyRangeMethod>standard</copyRangeMethod>
@@ -553,7 +553,7 @@ The following child elements may exist:
 .. option:: folder.maxConcurrentWrites
 
     Maximum number of concurrent write operations while syncing. Increasing this might increase or
-    decrease disk performance, depending on the underlying storage. Default is ``2``.
+    decrease disk performance, depending on the underlying storage. Default is ``16``.
 
 .. option:: folder.disableFsync
 
@@ -1427,7 +1427,7 @@ Defaults Element
             <markerName>.stfolder</markerName>
             <copyOwnershipFromParent>false</copyOwnershipFromParent>
             <modTimeWindowS>0</modTimeWindowS>
-            <maxConcurrentWrites>2</maxConcurrentWrites>
+            <maxConcurrentWrites>16</maxConcurrentWrites>
             <disableFsync>false</disableFsync>
             <blockPullOrder>standard</blockPullOrder>
             <copyRangeMethod>standard</copyRangeMethod>

@@ -1,12 +1,12 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 buildscript {
-    ext.kotlin_version = '1.9.0'
+    ext.kotlin_version = '1.9.10'
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.0.2'
+        classpath 'com.android.tools.build:gradle:8.1.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
         
         // NOTE: Do not place your application dependencies here; they belong
@@ -27,6 +27,6 @@ task clean(type: Delete) {
 
 ext {
     compileSdkVersion = 34
-    minSdkVersion = 21
+    minSdkVersion = 26  // Updated to support adaptive icons
     targetSdkVersion = 34
 }

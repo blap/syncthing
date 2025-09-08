@@ -8,7 +8,7 @@ import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import com.syncthing.android.R
-import com.syncthing.android.data.api.SyncthingApiService
+import com.syncthing.android.data.api.SyncthingApiServiceInterface
 import com.syncthing.android.data.repository.SyncthingRepository
 import com.syncthing.android.viewmodel.MainViewModel
 import com.syncthing.android.viewmodel.SyncthingViewModelFactory
@@ -35,7 +35,7 @@ class DevicesFragment : Fragment() {
             .addConverterFactory(GsonConverterFactory.create(GsonBuilder().setLenient().create()))
             .build()
         
-        val apiService = retrofit.create(SyncthingApiService::class.java)
+        val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
         val repository = SyncthingRepository(apiService)
         val factory = SyncthingViewModelFactory(repository)
         

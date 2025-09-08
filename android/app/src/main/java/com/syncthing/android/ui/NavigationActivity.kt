@@ -6,7 +6,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.syncthing.android.R
-import com.syncthing.android.data.api.SyncthingApiService
+import com.syncthing.android.data.api.SyncthingApiServiceInterface
 import com.syncthing.android.data.repository.SyncthingRepository
 import com.syncthing.android.ui.fragments.DashboardFragment
 import com.syncthing.android.ui.fragments.FoldersFragment
@@ -32,7 +32,7 @@ class NavigationActivity : AppCompatActivity() {
             .addConverterFactory(GsonConverterFactory.create())
             .build()
         
-        val apiService = retrofit.create(SyncthingApiService::class.java)
+        val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
         val repository = SyncthingRepository(apiService)
         val factory = SyncthingViewModelFactory(repository)
         

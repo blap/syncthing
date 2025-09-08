@@ -35,6 +35,7 @@ func TestDiscoveryCache(t *testing.T) {
 		events.NoopLogger, 
 		nil, 
 		registry.New(),
+		nil, // Add the missing ConnectionServiceSubsetInterface parameter
 	).(*manager)
 
 	// Create a test device ID

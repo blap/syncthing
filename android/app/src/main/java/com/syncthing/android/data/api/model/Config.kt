@@ -1,0 +1,132 @@
+package com.syncthing.android.data.api.model
+
+data class Config(
+    val version: Int,
+    val folders: List<Folder>,
+    val devices: List<Device>,
+    val options: Options,
+    val gui: GuiConfiguration
+)
+
+data class Folder(
+    val id: String,
+    val label: String,
+    val path: String,
+    val type: String,
+    val devices: List<FolderDevice>,
+    val rescanIntervalS: Int,
+    val fsWatcherEnabled: Boolean,
+    val fsWatcherDelayS: Int,
+    val ignorePerms: Boolean,
+    val autoNormalize: Boolean,
+    val minDiskFree: MinDiskFree,
+    val versioning: Versioning,
+    val copiers: Int,
+    val pullerMaxPendingKiB: Int,
+    val hashers: Int,
+    val order: String,
+    val ignoreDelete: Boolean,
+    val scanProgressIntervalS: Int,
+    val pullerPauseS: Int,
+    val maxConflicts: Int,
+    val disableSparseFiles: Boolean,
+    val disableTempIndexes: Boolean,
+    val paused: Boolean,
+    val weakHashThresholdPct: Int,
+    val markerName: String,
+    val copyOwnershipFromParent: Boolean,
+    val modTimeWindowS: Int,
+    val maxConcurrentWrites: Int,
+    val disableFsync: Boolean,
+    val blockPullOrder: String,
+    val copyRangeMethod: String,
+    val caseSensitiveFS: Boolean,
+    val junctionsAsDirs: Boolean
+)
+
+data class Device(
+    val deviceID: String,
+    val name: String,
+    val addresses: List<String>,
+    val compression: String,
+    val certName: String,
+    val introducer: Boolean,
+    val skipIntroductionRemovals: Boolean,
+    val introducedBy: String,
+    val paused: Boolean,
+    val allowedNetworks: List<String>,
+    val autoAcceptFolders: Boolean,
+    val maxSendKbps: Int,
+    val maxRecvKbps: Int,
+    val maxRequestKiB: Int,
+    val outgoingRateLimitKiBps: Int,
+    val allowedNetworksRateLimitKiBps: Int,
+    val untrusted: Boolean
+)
+
+data class Options(
+    val listenAddresses: List<String>,
+    val globalAnnounceServers: List<String>,
+    val globalAnnounceEnabled: Boolean,
+    val localAnnounceEnabled: Boolean,
+    val localAnnouncePort: Int,
+    val localAnnounceMCAddr: String,
+    val maxSendKbps: Int,
+    val maxRecvKbps: Int,
+    val reconnectionIntervalS: Int,
+    val relaysEnabled: Boolean,
+    val relayReconnectIntervalM: Int,
+    val startBrowser: Boolean,
+    val natEnabled: Boolean,
+    val natLeaseMinutes: Int,
+    val natRenewalMinutes: Int,
+    val natTimeoutSeconds: Int,
+    val urAccepted: Int,
+    val urUniqueId: String,
+    val urURL: String,
+    val urPostInsecurely: Boolean,
+    val urInitialDelayS: Int,
+    val restartOnWakeup: Boolean,
+    val autoUpgradeIntervalH: Int,
+    val upgradeToPreReleases: Boolean,
+    val keepTemporariesH: Int,
+    val cacheIgnoredFiles: Boolean,
+    val progressUpdateIntervalS: Int,
+    val limitBandwidthInLan: Boolean,
+    val minHomeDiskFree: MinDiskFree,
+    val releasesURL: String,
+    val alwaysLocalNets: List<String>,
+    val overwriteRemoteDeviceNamesOnConnect: Boolean,
+    val tempIndexMinBlocks: Int,
+    val unreachableNetworks: List<String>,
+    val untrusted: Boolean
+)
+
+data class GuiConfiguration(
+    val enabled: Boolean,
+    val address: String,
+    val user: String,
+    val password: String,
+    val useTLS: Boolean,
+    val apiKey: String,
+    val theme: String,
+    val debugging: Boolean,
+    val insecureAdminAccess: Boolean,
+    val insecureAllowFrameLoading: Boolean,
+    val sendBasicAuthPrompt: Boolean
+)
+
+data class FolderDevice(
+    val deviceID: String,
+    val introducedBy: String
+)
+
+data class MinDiskFree(
+    val value: Double,
+    val unit: String
+)
+
+data class Versioning(
+    val type: String,
+    val params: Map<String, String>
+)

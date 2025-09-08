@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.syncthing.android.viewmodel.MainViewModelTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2025-09-03T02:35:36" hostname="DESKTOP-O0BM6A2" time="0.326">
+  <properties/>
+  <testcase name="should call restart" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.188"/>
+  <testcase name="should fetch connections" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.01"/>
+  <testcase name="should fetch config when api key is set" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should fetch config devices" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.008"/>
+  <testcase name="should fetch events" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should call shutdown" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should update config" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.007"/>
+  <testcase name="should fetch config options" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should browse folder" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should fetch folder stats" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.007"/>
+  <testcase name="should fetch device stats" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should fetch config folders" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.008"/>
+  <testcase name="should fetch folder status" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should fetch folder need" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.008"/>
+  <testcase name="should show error when fetching without api key" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <testcase name="should update system status when fetched" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.007"/>
+  <testcase name="should update config options" classname="com.syncthing.android.viewmodel.MainViewModelTest" time="0.009"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

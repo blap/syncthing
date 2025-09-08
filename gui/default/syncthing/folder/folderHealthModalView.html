@@ -1,0 +1,66 @@
+<modal id="folderHealth" status="default" icon="fas fa-heartbeat" heading="{{'Folder Health Details' | translate}}" large="yes" closeable="yes">
+  <div class="modal-body">
+    <div ng-if="currentFolder.health.healthy" class="alert alert-success">
+      <span class="fas fa-check-circle"></span>&nbsp;<span translate>Folder is healthy</span>
+    </div>
+    <div ng-if="!currentFolder.health.healthy" class="alert alert-warning">
+      <span class="fas fa-exclamation-triangle"></span>&nbsp;<span translate>Folder has issues</span>
+      <ul ng-if="currentFolder.health.issues.length > 0">
+        <li ng-repeat="issue in currentFolder.health.issues">{{issue}}</li>
+      </ul>
+    </div>
+    
+    <h4 translate>Folder Information</h4>
+    <table class="table table-condensed table-striped">
+      <tbody>
+        <tr>
+          <th><span translate>Folder ID</span></th>
+          <td>{{currentFolder.id}}</td>
+        </tr>
+        <tr>
+          <th><span translate>Folder Label</span></th>
+          <td>{{currentFolder.label}}</td>
+        </tr>
+        <tr>
+          <th><span translate>Folder Path</span></th>
+          <td>{{currentFolder.path}}</td>
+        </tr>
+        <tr>
+          <th><span translate>Folder Type</span></th>
+          <td>
+            <span ng-if="currentFolder.type == 'sendreceive'" translate>Send &amp; Receive</span>
+            <span ng-if="currentFolder.type == 'sendonly'" translate>Send Only</span>
+            <span ng-if="currentFolder.type == 'receiveonly'" translate>Receive Only</span>
+            <span ng-if="currentFolder.type == 'receiveencrypted'" translate>Receive Encrypted</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <h4 translate>Health Check Details</h4>
+    <div ng-if="currentFolder.health.issues.length > 0">
+      <p translate>The following issues were detected with this folder:</p>
+      <ul>
+        <li ng-repeat="issue in currentFolder.health.issues">{{issue}}</li>
+      </ul>
+      <p translate>These issues may prevent the folder from syncing correctly. Please address them to ensure proper operation.</p>
+    </div>
+    <div ng-if="currentFolder.health.healthy">
+      <p translate>No issues were detected with this folder. All health checks passed successfully.</p>
+    </div>
+    
+    <div ng-if="!currentFolder.health.healthy">
+      <h4 translate>Automatic Resolution</h4>
+      <p translate>Some issues can be resolved automatically:</p>
+      <button type="button" class="btn btn-default" ng-click="resolveFolderIssues(currentFolder)" ng-disabled="resolvingIssues">
+        <span class="fas fa-magic"></span>&nbsp;<span translate>Attempt Automatic Resolution</span>
+      </button>
+      <span ng-if="resolvingIssues" class="fa fa-spinner fa-pulse fa-fw"></span>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button type="button" class="btn btn-default btn-sm" data-dismiss="modal">
+      <span class="fas fa-times"></span>&nbsp;<span translate>Close</span>
+    </button>
+  </div>
+</modal>

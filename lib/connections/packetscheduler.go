@@ -217,3 +217,143 @@ func (ps *PacketScheduler) GetConnections(deviceID protocol.DeviceID) []protocol
 	}
 	return nil
 }
+
+// SelectConnectionBasedOnTraffic selects the best connection based on traffic metrics
+func (ps *PacketScheduler) SelectConnectionBasedOnTraffic(deviceID protocol.DeviceID) protocol.Connection {
+	ps.mut.RLock()
+	defer ps.mut.RUnlock()
+
+	conns, ok := ps.connections[deviceID]
+	if !ok || len(conns) == 0 {
+		return nil
+	}
+
+	// If only one connection, return it
+	if len(conns) == 1 {
+		return conns[0]
+	}
+
+	// Select based on traffic metrics (bandwidth, latency, packet loss)
+	return ps.selectBestConnectionByTraffic(conns)
+}
+
+// GetAggregatedBandwidth returns the total bandwidth across all connections for a device
+func (ps *PacketScheduler) GetAggregatedBandwidth(deviceID protocol.DeviceID) float64 {
+	ps.mut.RLock()
+	defer ps.mut.RUnlock()
+
+	conns, ok := ps.connections[deviceID]
+	if !ok {
+		return 0
+	}
+
+	var totalBandwidth float64
+	for _, conn := range conns {
+		if trafficConn, ok := conn.(interface{ GetBandwidth() float64 }); ok {
+			totalBandwidth += trafficConn.GetBandwidth()
+		}
+	}
+
+	return totalBandwidth
+}
+
+// GetConnectionBandwidth returns the bandwidth for a specific connection
+func (ps *PacketScheduler) GetConnectionBandwidth(deviceID protocol.DeviceID, connID string) float64 {
+	ps.mut.RLock()
+	defer ps.mut.RUnlock()
+
+	conns, ok := ps.connections[deviceID]
+	if !ok {
+		return 0
+	}
+
+	for _, conn := range conns {
+		if conn.ConnectionID() == connID {
+			if trafficConn, ok := conn.(interface{ GetBandwidth() float64 }); ok {
+				return trafficConn.GetBandwidth()
+			}
+			break
+		}
+	}
+
+	return 0
+}
+
+// DistributeDataChunks distributes data chunks across connections based on their capabilities
+func (ps *PacketScheduler) DistributeDataChunks(deviceID protocol.DeviceID, chunkSize int64) map[string]int64 {
+	ps.mut.RLock()
+	defer ps.mut.RUnlock()
+
+	result := make(map[string]int64)
+	
+	conns, ok := ps.connections[deviceID]
+	if !ok || len(conns) == 0 {
+		return result
+	}
+
+	// Distribute chunks based on connection bandwidth
+	totalBandwidth := ps.GetAggregatedBandwidth(deviceID)
+	if totalBandwidth <= 0 {
+		// Distribute evenly if no bandwidth info
+		chunkPerConn := chunkSize / int64(len(conns))
+		for _, conn := range conns {
+			result[conn.ConnectionID()] = chunkPerConn
+		}
+		return result
+	}
+
+	for _, conn := range conns {
+		if trafficConn, ok := conn.(interface{ GetBandwidth() float64 }); ok {
+			bandwidth := trafficConn.GetBandwidth()
+			allocation := int64((bandwidth / totalBandwidth) * float64(chunkSize))
+			result[conn.ConnectionID()] = allocation
+		} else {
+			result[conn.ConnectionID()] = 0
+		}
+	}
+
+	return result
+}
+
+// selectBestConnectionByTraffic selects the best connection based on traffic metrics
+func (ps *PacketScheduler) selectBestConnectionByTraffic(connections []protocol.Connection) protocol.Connection {
+	if len(connections) == 0 {
+		return nil
+	}
+
+	bestConn := connections[0]
+	bestScore := ps.getTrafficScore(bestConn)
+
+	for _, conn := range connections[1:] {
+		score := ps.getTrafficScore(conn)
+		if score > bestScore {
+			bestConn = conn
+			bestScore = score
+		}
+	}
+
+	return bestConn
+}
+
+// getTrafficScore calculates a score based on traffic metrics
+func (ps *PacketScheduler) getTrafficScore(conn protocol.Connection) float64 {
+	// Try to get traffic metrics from the connection
+	if trafficConn, ok := conn.(interface {
+		GetBandwidth() float64
+		GetLatency() time.Duration
+		GetPacketLoss() float64
+	}); ok {
+		bandwidth := trafficConn.GetBandwidth()
+		latency := trafficConn.GetLatency()
+		packetLoss := trafficConn.GetPacketLoss()
+
+		// Calculate weighted score
+		// Higher bandwidth = better, lower latency = better, lower packet loss = better
+		latencyScore := 1.0 / (1.0 + latency.Seconds())
+		packetLossScore := 1.0 - packetLoss
+		return bandwidth * latencyScore * packetLossScore
+	}
+
+	// Fallback to health score if traffic metrics not available
+	return ps.getHealthScore(conn)
+}

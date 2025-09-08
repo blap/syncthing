@@ -47,6 +47,50 @@ func NewEnhancedMockConnection(id string, deviceID protocol.DeviceID, priority i
 	}
 }
 
+// NewEnhancedMockConnectionWithNetworkType creates a new enhanced mock connection with network type
+func NewEnhancedMockConnectionWithNetworkType(id string, deviceID protocol.DeviceID, priority int, healthScore float64, networkType string) *EnhancedMockConnection {
+	conn := NewEnhancedMockConnection(id, deviceID, priority, healthScore)
+	// For network type simulation, we could add a field, but for now we'll just use the priority
+	// to differentiate LAN (higher priority) from WAN (lower priority)
+	if networkType == "lan" {
+		conn.priority = priority + 10 // Boost priority for LAN
+	}
+	return conn
+}
+
+// NewEnhancedMockConnectionWithSuccessRate creates a new enhanced mock connection with success rate
+func NewEnhancedMockConnectionWithSuccessRate(id string, deviceID protocol.DeviceID, priority int, healthScore float64, successRate float64) *EnhancedMockConnection {
+	conn := NewEnhancedMockConnection(id, deviceID, priority, healthScore)
+	// For success rate simulation, we could add a field, but for now we'll just use health score
+	// to represent success rate (100% success rate = higher health score)
+	conn.healthScore = healthScore * successRate
+	if conn.healthMonitor != nil {
+		conn.healthMonitor.SetHealthScore(conn.healthScore)
+	}
+	return conn
+}
+
+// NewEnhancedMockConnectionWithTrafficMetrics creates a new enhanced mock connection with traffic metrics
+func NewEnhancedMockConnectionWithTrafficMetrics(id string, deviceID protocol.DeviceID, priority int, healthScore float64, bandwidth float64, latency float64) *EnhancedMockConnection {
+	conn := NewEnhancedMockConnection(id, deviceID, priority, healthScore)
+	// For traffic metrics simulation, we could add fields, but for now we'll just use the latency
+	conn.latency = time.Duration(latency) * time.Millisecond
+	return conn
+}
+
+// SuccessRate returns the success rate of this connection (for testing purposes)
+func (m *EnhancedMockConnection) SuccessRate() float64 {
+	// Convert health score to success rate (simplified)
+	return m.healthScore / 100.0
+}
+
+// SimulateDataTransfer simulates data transfer for bandwidth calculation
+func (m *EnhancedMockConnection) SimulateDataTransfer(bytesOut, bytesIn int64) {
+	// This is a mock implementation - in a real implementation, this would track actual data transfer
+	// For now, we'll just update some internal counters
+	// This method is needed to satisfy the interface used in tests
+}
+
 // ID returns the connection ID
 func (m *EnhancedMockConnection) ID() string {
 	return m.id

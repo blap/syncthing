@@ -40,30 +40,63 @@ func init() {
 
 // overflowTracker keeps track of buffer overflow events for adaptive management
 type overflowTracker struct {
-	mu             sync.Mutex
-	count          int
-	lastOverflow   time.Time
-	frequency      time.Duration
-	adaptiveBuffer int
+	mu                   sync.Mutex
+	count                int
+	lastOverflow         time.Time
+	frequency            time.Duration
+	adaptiveBuffer       int
+	minBufferSize        int
+	maxBufferSize        int
+	resizeFactor         float64
+	consecutiveOverflows int
+	overflowHistory      []time.Time
+	avgOverflowInterval  time.Duration
+	overflowRate         float64
 }
 
-// newOverflowTracker creates a new overflow tracker
+// newOverflowTracker creates a new overflow tracker with default configuration
 func newOverflowTracker() *overflowTracker {
 	return &overflowTracker{
 		count:          0,
 		lastOverflow:   time.Time{},
 		frequency:      0,
-		adaptiveBuffer: backendBuffer,
+		adaptiveBuffer: 1000,
+		minBufferSize:  500,
+		maxBufferSize:  10000,
+		resizeFactor:   1.5,
+		overflowHistory: make([]time.Time, 0, 100), // Keep last 100 overflow timestamps
 	}
 }
 
-// recordOverflow records an overflow event and updates frequency tracking
+// newOverflowTrackerWithConfig creates a new overflow tracker with custom configuration
+func newOverflowTrackerWithConfig(minBufferSize, maxBufferSize, adaptiveBuffer int) *overflowTracker {
+	ot := newOverflowTracker()
+	ot.minBufferSize = minBufferSize
+	ot.maxBufferSize = maxBufferSize
+	ot.adaptiveBuffer = adaptiveBuffer
+	ot.resizeFactor = float64(maxBufferSize) / float64(minBufferSize) / 10.0
+	if ot.resizeFactor < 1.1 {
+		ot.resizeFactor = 1.1
+	}
+	return ot
+}
+
+// recordOverflow records an overflow event and updates tracking metrics
 func (ot *overflowTracker) recordOverflow() {
 	ot.mu.Lock()
 	defer ot.mu.Unlock()
 
 	now := time.Now()
 	ot.count++
+	ot.consecutiveOverflows++
+
+	// Add to overflow history
+	ot.overflowHistory = append(ot.overflowHistory, now)
+	
+	// Keep only the last 100 timestamps
+	if len(ot.overflowHistory) > 100 {
+		ot.overflowHistory = ot.overflowHistory[1:]
+	}
 
 	if !ot.lastOverflow.IsZero() {
 		// Calculate the time between overflows
@@ -71,6 +104,12 @@ func (ot *overflowTracker) recordOverflow() {
 	}
 
 	ot.lastOverflow = now
+	
+	// Calculate average overflow interval
+	ot.calculateAvgOverflowInterval()
+	
+	// Calculate overflow rate (overflows per minute)
+	ot.calculateOverflowRate()
 }
 
 // shouldIncreaseBuffer determines if we should increase the buffer size based on overflow patterns
@@ -79,21 +118,196 @@ func (ot *overflowTracker) shouldIncreaseBuffer() bool {
 	defer ot.mu.Unlock()
 
 	// If we have frequent overflows (less than 30 seconds between them) and we haven't maxed out the buffer
-	return ot.frequency > 0 && ot.frequency < 30*time.Second && ot.adaptiveBuffer < 10000
+	return ot.frequency > 0 && ot.frequency < 30*time.Second && ot.adaptiveBuffer < ot.maxBufferSize && ot.consecutiveOverflows > 2
 }
 
-// increaseBuffer increases the buffer size and returns the new size
+// shouldDecreaseBuffer determines if we should decrease the buffer size based on inactivity
+func (ot *overflowTracker) shouldDecreaseBuffer(lastEvent time.Time) bool {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// If we haven't had an overflow for more than 5 minutes and buffer is more than 2x the minimum
+	inactivityDuration := time.Since(ot.lastOverflow)
+	eventInactivity := time.Since(lastEvent)
+	
+	return inactivityDuration > 5*time.Minute && 
+		   eventInactivity > 10*time.Minute && 
+		   ot.adaptiveBuffer > ot.minBufferSize*2
+}
+
+// getSystemPressure calculates a normalized system pressure value (0.0 to 1.0)
+func (ot *overflowTracker) getSystemPressure() float64 {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Calculate pressure based on overflow rate, buffer utilization, and consecutive overflows
+	ratePressure := ot.overflowRate / 10.0 // Normalize to 0-1 range (assuming 10 overflows/min is high)
+	bufferPressure := float64(ot.adaptiveBuffer-ot.minBufferSize) / float64(ot.maxBufferSize-ot.minBufferSize)
+	overflowPressure := float64(ot.consecutiveOverflows) / 20.0 // Normalize to 0-1 range (assuming 20 consecutive is high)
+
+	// Weighted average
+	pressure := (ratePressure*0.4 + bufferPressure*0.3 + overflowPressure*0.3)
+	
+	// Clamp to 0-1 range
+	if pressure > 1.0 {
+		pressure = 1.0
+	}
+	if pressure < 0.0 {
+		pressure = 0.0
+	}
+	
+	return pressure
+}
+
+// increaseBuffer increases the buffer size based on system pressure
 func (ot *overflowTracker) increaseBuffer() int {
 	ot.mu.Lock()
 	defer ot.mu.Unlock()
 
-	// Increase buffer by 50%
-	ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer) * 1.5)
-	if ot.adaptiveBuffer > 10000 {
-		ot.adaptiveBuffer = 10000 // Cap at 10000
+	// Get adaptive resize factor based on system pressure
+	factor := ot.getAdaptiveResizeFactor()
+	
+	// Increase buffer by the adaptive factor
+	ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer) * factor)
+	
+	// Cap at maximum buffer size
+	if ot.adaptiveBuffer > ot.maxBufferSize {
+		ot.adaptiveBuffer = ot.maxBufferSize
 	}
 
 	return ot.adaptiveBuffer
+}
+
+// decreaseBuffer decreases the buffer size based on system pressure
+func (ot *overflowTracker) decreaseBuffer() int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Decrease buffer by resize factor
+	ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer) / ot.resizeFactor)
+	
+	// Ensure it doesn't go below minimum buffer size
+	if ot.adaptiveBuffer < ot.minBufferSize {
+		ot.adaptiveBuffer = ot.minBufferSize
+	}
+
+	return ot.adaptiveBuffer
+}
+
+// getOptimalBufferSize calculates an optimal buffer size based on folder size
+func (ot *overflowTracker) getOptimalBufferSize(fileCount int) int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Calculate buffer size based on file count with logarithmic scaling
+	// This prevents extremely large buffers for huge folders
+	optimalSize := int(float64(ot.minBufferSize) * (1 + (float64(fileCount) / 1000.0)))
+	
+	// Apply logarithmic scaling for very large folders
+	if fileCount > 10000 {
+		optimalSize = int(float64(ot.minBufferSize) * (1 + (10 * (1 + (float64(fileCount) / 100000.0)))))
+	}
+	
+	// Clamp between min and max buffer sizes
+	if optimalSize < ot.minBufferSize {
+		optimalSize = ot.minBufferSize
+	}
+	if optimalSize > ot.maxBufferSize {
+		optimalSize = ot.maxBufferSize
+	}
+
+	return optimalSize
+}
+
+// updateBufferSizeBasedOnResources dynamically adjusts buffer size based on system resources
+func (ot *overflowTracker) updateBufferSizeBasedOnResources(fileCount int) int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Get the optimal buffer size for this folder
+	optimalSize := ot.getOptimalBufferSize(fileCount)
+	
+	// Get current system pressure
+	pressure := ot.getSystemPressure()
+	
+	// Adjust buffer size based on pressure
+	if pressure > 0.7 {
+		// High pressure - increase buffer toward optimal size
+		ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer)*(1-pressure) + float64(optimalSize)*pressure)
+	} else if pressure < 0.3 {
+		// Low pressure - potentially decrease buffer
+		ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer)*0.9 + float64(optimalSize)*0.1)
+	} else {
+		// Moderate pressure - slowly adjust toward optimal
+		ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer)*0.95 + float64(optimalSize)*0.05)
+	}
+	
+	// Clamp between min and max buffer sizes
+	if ot.adaptiveBuffer < ot.minBufferSize {
+		ot.adaptiveBuffer = ot.minBufferSize
+	}
+	if ot.adaptiveBuffer > ot.maxBufferSize {
+		ot.adaptiveBuffer = ot.maxBufferSize
+	}
+
+	return ot.adaptiveBuffer
+}
+
+// getAdaptiveResizeFactor calculates a resize factor based on system pressure
+func (ot *overflowTracker) getAdaptiveResizeFactor() float64 {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	pressure := ot.getSystemPressure()
+	
+	// Return different factors based on pressure
+	if pressure > 0.8 {
+		return 2.0 // High pressure - aggressive resize
+	} else if pressure > 0.6 {
+		return 1.5 // Medium-high pressure
+	} else if pressure > 0.4 {
+		return 1.2 // Medium pressure
+	} else {
+		return 1.1 // Low pressure - conservative resize
+	}
+}
+
+// getBufferSize returns the current adaptive buffer size
+func (ot *overflowTracker) getBufferSize() int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	return ot.adaptiveBuffer
+}
+
+// resetConsecutiveOverflows resets the consecutive overflow counter
+func (ot *overflowTracker) resetConsecutiveOverflows() {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	ot.consecutiveOverflows = 0
+}
+
+// calculateAvgOverflowInterval calculates the average time between overflows
+func (ot *overflowTracker) calculateAvgOverflowInterval() {
+	if len(ot.overflowHistory) >= 2 {
+		totalDuration := time.Duration(0)
+		for i := 1; i < len(ot.overflowHistory); i++ {
+			totalDuration += ot.overflowHistory[i].Sub(ot.overflowHistory[i-1])
+		}
+		ot.avgOverflowInterval = totalDuration / time.Duration(len(ot.overflowHistory)-1)
+	}
+}
+
+// calculateOverflowRate calculates the overflow rate (overflows per minute)
+func (ot *overflowTracker) calculateOverflowRate() {
+	if len(ot.overflowHistory) >= 2 {
+		first := ot.overflowHistory[0]
+		last := ot.overflowHistory[len(ot.overflowHistory)-1]
+		duration := last.Sub(first)
+		if duration > 0 {
+			overflowsPerMinute := float64(len(ot.overflowHistory)-1) / (duration.Minutes())
+			ot.overflowRate = overflowsPerMinute
+		}
+	}
 }
 
 // watchMetrics tracks performance metrics for file watching

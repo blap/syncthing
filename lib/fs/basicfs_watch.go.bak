@@ -1,0 +1,798 @@
+// Copyright (C) 2016 The Syncthing Authors.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this file,
+// You can obtain one at http://mozilla.org/MPL/2.0/.
+
+//go:build !(solaris && !cgo) && !(darwin && !cgo) && !(darwin && kqueue) && !(android && amd64)
+// +build !solaris cgo
+// +build !darwin cgo
+// +build !darwin !kqueue
+// +build !android !amd64
+
+package fs
+
+import (
+	"context"
+	"errors"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/syncthing/notify"
+	"github.com/syncthing/syncthing/lib/build"
+)
+
+// Notify does not block on sending to channel, so the channel must be buffered.
+// The actual number is magic.
+// Not meant to be changed, but must be changeable for tests
+var backendBuffer = 500
+
+// For Windows systems with large filesets, we use a larger buffer to prevent
+// event overflow which can cause file change notifications to be missed.
+func init() {
+	if build.IsWindows {
+		// Use a larger buffer on Windows to handle large filesets better
+		backendBuffer = 2000
+	}
+}
+
+// getMaxUserWatches returns the maximum number of user watches based on configuration
+func (f *BasicFilesystem) getMaxUserWatches() int {
+	if f.cfg != nil {
+		options := f.cfg.Options()
+		return options.MaxBufferSize
+	}
+	// Fallback to platform-specific maximum
+	return getPlatformMaxUserWatches()
+}
+
+// overflowTracker keeps track of buffer overflow events for adaptive management
+type overflowTracker struct {
+	mu             sync.Mutex
+	count          int
+	lastOverflow   time.Time
+	frequency      time.Duration
+	adaptiveBuffer int
+	minBufferSize  int
+	maxBufferSize  int
+	resizeFactor   float64
+	
+	// Enhanced overflow tracking
+	consecutiveOverflows int           // Number of consecutive overflows
+	overflowHistory      []time.Time   // History of recent overflow times
+	maxHistorySize       int           // Maximum size of overflow history
+	avgOverflowInterval  time.Duration // Average time between overflows
+	overflowRate         float64       // Overflows per minute
+	systemPressure       float64       // System pressure indicator (0.0-1.0)
+}
+
+// newOverflowTracker creates a new overflow tracker with default values
+func newOverflowTracker() *overflowTracker {
+	return &overflowTracker{
+		count:          0,
+		lastOverflow:   time.Time{},
+		frequency:      0,
+		adaptiveBuffer: backendBuffer,
+		minBufferSize:  500,
+		maxBufferSize:  10000,
+		resizeFactor:   1.5, // 50% increase
+		overflowHistory: make([]time.Time, 0, 10), // Keep last 10 overflow times
+		maxHistorySize: 10,
+	}
+}
+
+// newOverflowTrackerWithConfig creates a new overflow tracker with configuration values
+func newOverflowTrackerWithConfig(minBufferSize, maxBufferSize, resizeFactor int) *overflowTracker {
+	resize := 1.5
+	if resizeFactor > 100 {
+		resize = float64(resizeFactor) / 100.0
+	}
+	
+	return &overflowTracker{
+		count:          0,
+		lastOverflow:   time.Time{},
+		frequency:      0,
+		adaptiveBuffer: max(backendBuffer, minBufferSize),
+		minBufferSize:  minBufferSize,
+		maxBufferSize:  maxBufferSize,
+		resizeFactor:   resize,
+		overflowHistory: make([]time.Time, 0, 10), // Keep last 10 overflow times
+		maxHistorySize: 10,
+	}
+}
+
+// newOverflowTrackerWithConfigFromOptions creates a new overflow tracker with configuration values from options
+func (f *BasicFilesystem) newOverflowTrackerWithConfigFromOptions() *overflowTracker {
+	if f.cfg != nil {
+		options := f.cfg.Options()
+		resize := 1.5
+		if options.BufferResizeFactor > 100 {
+			resize = float64(options.BufferResizeFactor) / 100.0
+		}
+		
+		return &overflowTracker{
+			count:          0,
+			lastOverflow:   time.Time{},
+			frequency:      0,
+			adaptiveBuffer: max(backendBuffer, options.MinBufferSize),
+			minBufferSize:  options.MinBufferSize,
+			maxBufferSize:  options.MaxBufferSize,
+			resizeFactor:   resize,
+			overflowHistory: make([]time.Time, 0, 10), // Keep last 10 overflow times
+			maxHistorySize: 10,
+		}
+	}
+	
+	// Fallback to default values
+	return newOverflowTracker()
+}
+
+// recordOverflow records an overflow event and updates frequency tracking
+func (ot *overflowTracker) recordOverflow() {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	now := time.Now()
+	ot.count++
+
+	// Update consecutive overflow counter
+	if !ot.lastOverflow.IsZero() && now.Sub(ot.lastOverflow) < time.Minute {
+		ot.consecutiveOverflows++
+	} else {
+		ot.consecutiveOverflows = 1
+	}
+
+	// Calculate the time between overflows
+	if !ot.lastOverflow.IsZero() {
+		ot.frequency = now.Sub(ot.lastOverflow)
+	}
+
+	// Update overflow history
+	ot.overflowHistory = append(ot.overflowHistory, now)
+	if len(ot.overflowHistory) > ot.maxHistorySize {
+		// Remove oldest entry
+		ot.overflowHistory = ot.overflowHistory[1:]
+	}
+
+	// Calculate average overflow interval if we have enough data
+	if len(ot.overflowHistory) >= 2 {
+		totalDuration := time.Duration(0)
+		for i := 1; i < len(ot.overflowHistory); i++ {
+			totalDuration += ot.overflowHistory[i].Sub(ot.overflowHistory[i-1])
+		}
+		ot.avgOverflowInterval = totalDuration / time.Duration(len(ot.overflowHistory)-1)
+	}
+
+	// Calculate overflow rate (overflows per minute)
+	if len(ot.overflowHistory) >= 2 {
+		first := ot.overflowHistory[0]
+		last := ot.overflowHistory[len(ot.overflowHistory)-1]
+		duration := last.Sub(first)
+		if duration > 0 {
+			overflowsPerMinute := float64(len(ot.overflowHistory)-1) / (duration.Minutes())
+			ot.overflowRate = overflowsPerMinute
+		}
+	}
+
+	ot.lastOverflow = now
+}
+
+// shouldIncreaseBuffer determines if we should increase the buffer size based on overflow patterns
+func (ot *overflowTracker) shouldIncreaseBuffer() bool {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Multiple criteria for increasing buffer:
+	
+	// 1. Frequent overflows (less than 30 seconds between them)
+	frequentOverflows := ot.frequency > 0 && ot.frequency < 30*time.Second
+	
+	// 2. High overflow rate (more than 2 overflows per minute)
+	highOverflowRate := ot.overflowRate > 2.0
+	
+	// 3. Consecutive overflows (3 or more in a row)
+	consecutive := ot.consecutiveOverflows >= 3
+	
+	// 4. Buffer not yet maxed out
+	bufferNotMaxed := ot.adaptiveBuffer < ot.maxBufferSize
+	
+	// Increase buffer if any of these conditions are met and we haven't maxed out
+	return bufferNotMaxed && (frequentOverflows || highOverflowRate || consecutive)
+}
+
+// shouldDecreaseBuffer determines if we should decrease the buffer size based on low activity
+func (ot *overflowTracker) shouldDecreaseBuffer(lastEvent time.Time) bool {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// If we haven't had any overflows for a long time (more than 5 minutes) and buffer is larger than minimum
+	timeSinceLastOverflow := time.Since(ot.lastOverflow)
+	timeSinceLastEvent := time.Since(lastEvent)
+	
+	// Additional criteria for decreasing buffer:
+	
+	// 1. Very low activity (no events for a long time)
+	lowActivity := timeSinceLastEvent > 10*time.Minute
+	
+	// 2. Low overflow rate (less than 0.1 overflows per minute)
+	lowOverflowRate := ot.overflowRate < 0.1
+	
+	// 3. Buffer is significantly larger than minimum
+	significantlyLarger := ot.adaptiveBuffer > ot.minBufferSize*2
+	
+	return (timeSinceLastOverflow > 5*time.Minute && 
+		   timeSinceLastEvent > 5*time.Minute && 
+		   ot.adaptiveBuffer > ot.minBufferSize) &&
+		   (lowActivity || lowOverflowRate) && significantlyLarger
+}
+
+// getSystemPressure returns a normalized pressure indicator (0.0-1.0) based on overflow patterns
+func (ot *overflowTracker) getSystemPressure() float64 {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	
+	// Calculate pressure based on multiple factors:
+	
+	// 1. Overflow rate (normalized to 0-1 range, assuming 10 overflows/minute is maximum pressure)
+	ratePressure := ot.overflowRate / 10.0
+	if ratePressure > 1.0 {
+		ratePressure = 1.0
+	}
+	
+	// 2. Buffer utilization (how close we are to maximum buffer size)
+	bufferPressure := float64(ot.adaptiveBuffer-ot.minBufferSize) / float64(ot.maxBufferSize-ot.minBufferSize)
+	if bufferPressure > 1.0 {
+		bufferPressure = 1.0
+	}
+	
+	// 3. Consecutive overflows (normalized to 0-1 range, assuming 10 consecutive is maximum)
+	consecutivePressure := float64(ot.consecutiveOverflows) / 10.0
+	if consecutivePressure > 1.0 {
+		consecutivePressure = 1.0
+	}
+	
+	// Weighted average of all pressures
+	pressure := 0.5*ratePressure + 0.3*bufferPressure + 0.2*consecutivePressure
+	
+	return pressure
+}
+
+// getAdaptiveResizeFactor calculates a dynamic resize factor based on system pressure
+func (ot *overflowTracker) getAdaptiveResizeFactor() float64 {
+	pressure := ot.getSystemPressure()
+	
+	// Under low pressure, use conservative resize factor
+	if pressure < 0.3 {
+		return 1.1 // 10% increase
+	}
+	
+	// Under medium pressure, use moderate resize factor
+	if pressure < 0.7 {
+		return ot.resizeFactor // Default 1.5 (50% increase)
+	}
+	
+	// Under high pressure, use aggressive resize factor
+	return 2.0 // 100% increase
+}
+
+// increaseBuffer increases the buffer size and returns the new size
+func (ot *overflowTracker) increaseBuffer() int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Use adaptive resize factor based on system pressure
+	adaptiveFactor := ot.getAdaptiveResizeFactor()
+	
+	// Increase buffer by resize factor
+	ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer) * adaptiveFactor)
+	if ot.adaptiveBuffer > ot.maxBufferSize {
+		ot.adaptiveBuffer = ot.maxBufferSize
+	}
+
+	return ot.adaptiveBuffer
+}
+
+// decreaseBuffer decreases the buffer size and returns the new size
+func (ot *overflowTracker) decreaseBuffer() int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+
+	// Use conservative decrease factor
+	decreaseFactor := 1.25 // 25% decrease
+	
+	// Decrease buffer by resize factor (but not below minimum)
+	newSize := int(float64(ot.adaptiveBuffer) / decreaseFactor)
+	if newSize < ot.minBufferSize {
+		ot.adaptiveBuffer = ot.minBufferSize
+	} else {
+		ot.adaptiveBuffer = newSize
+	}
+
+	return ot.adaptiveBuffer
+}
+
+// getBufferSize returns the current adaptive buffer size
+func (ot *overflowTracker) getBufferSize() int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	return ot.adaptiveBuffer
+}
+
+// resetConsecutiveOverflows resets the consecutive overflow counter
+func (ot *overflowTracker) resetConsecutiveOverflows() {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	ot.consecutiveOverflows = 0
+}
+
+// watchMetrics tracks performance metrics for file watching
+type watchMetrics struct {
+	mu              sync.Mutex
+	eventsProcessed int64
+	eventsDropped   int64
+	overflows       int64
+	startTime       time.Time
+	lastEvent       time.Time
+}
+
+// newWatchMetrics creates a new watch metrics tracker
+func newWatchMetrics() *watchMetrics {
+	return &watchMetrics{
+		startTime: time.Now(),
+	}
+}
+
+// recordEvent records that an event was processed
+func (wm *watchMetrics) recordEvent() {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	wm.eventsProcessed++
+	wm.lastEvent = time.Now()
+}
+
+// recordDroppedEvent records that an event was dropped
+func (wm *watchMetrics) recordDroppedEvent() {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	wm.eventsDropped++
+}
+
+// recordOverflow records a buffer overflow
+func (wm *watchMetrics) recordOverflow() {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	wm.overflows++
+}
+
+// getMetrics returns current metrics
+func (wm *watchMetrics) getMetrics() (eventsProcessed, eventsDropped, overflows int64, uptime, timeSinceLastEvent time.Duration) {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	now := time.Now()
+	uptime = now.Sub(wm.startTime)
+	timeSinceLastEvent = now.Sub(wm.lastEvent)
+
+	return wm.eventsProcessed, wm.eventsDropped, wm.overflows, uptime, timeSinceLastEvent
+}
+
+// logMetrics periodically logs metrics for monitoring
+func (wm *watchMetrics) logMetrics(fs *BasicFilesystem, name string) {
+	ticker := time.NewTicker(5 * time.Minute)
+	go func() {
+		for range ticker.C {
+			eventsProcessed, eventsDropped, overflows, uptime, timeSinceLastEvent := wm.getMetrics()
+			l.Debugln(fs.Type(), fs.URI(), "Watch metrics for", name, "- Processed:", eventsProcessed,
+				"Dropped:", eventsDropped, "Overflows:", overflows,
+				"Uptime:", uptime.Truncate(time.Second),
+				"Idle:", timeSinceLastEvent.Truncate(time.Second))
+		}
+	}()
+}
+
+// updatePrometheusMetrics updates Prometheus metrics for monitoring
+func (wm *watchMetrics) updatePrometheusMetrics(fs *BasicFilesystem, overflowTracker *overflowTracker) {
+	// Get current metrics
+	_, _, overflows, _, _ := wm.getMetrics()
+	
+	// Get system pressure
+	pressure := overflowTracker.getSystemPressure()
+	
+	// Update Prometheus metrics
+	root := fs.URI()
+	metricBufferPressure.WithLabelValues(root).Set(pressure)
+	
+	// Note: We don't track buffer resizes in the current implementation
+	// but we could add that if needed
+}
+
+// countFilesInDirectory counts the number of files in a directory recursively
+func countFilesInDirectory(fs *BasicFilesystem, dir string) (int, error) {
+	count := 0
+	err := fs.Walk(dir, func(path string, info FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
+// checkLargeFolder analyzes a folder and provides recommendations if it's large
+func checkLargeFolder(fs *BasicFilesystem, name string) {
+	// Count files in the folder
+	fileCount, err := countFilesInDirectory(fs, name)
+	if err != nil {
+		l.Debugln(fs.Type(), fs.URI(), "Watch: Could not count files in", name, "-", err)
+		return
+	}
+
+	// If the folder has many files, provide recommendations
+	if fileCount > 10000 {
+		l.Debugln(fs.Type(), fs.URI(), "Watch: Folder", name, "contains", fileCount, "files which may cause performance issues.",
+			"Consider excluding temporary files, build artifacts, or using more specific folder paths.")
+	} else if fileCount > 5000 {
+		l.Debugln(fs.Type(), fs.URI(), "Watch: Folder", name, "contains", fileCount, "files.",
+			"Monitor performance and consider exclusions if issues occur.")
+	} else if fileCount > 1000 {
+		l.Debugln(fs.Type(), fs.URI(), "Watch: Folder", name, "contains", fileCount, "files.")
+	}
+}
+
+func (f *BasicFilesystem) Watch(name string, ignore Matcher, ctx context.Context, ignorePerms bool) (<-chan Event, <-chan error, error) {
+	// Use platform-specific watchers for better performance
+	// The platform-specific implementations are in separate files with build tags
+	// This function will automatically use the appropriate implementation based on the platform
+	
+	// For platforms that don't have specialized implementations, fall back to generic watcher
+	watchPath, roots, err := f.watchPaths(name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Proactively check if this is a large folder and provide recommendations
+	checkLargeFolder(f, name)
+
+	outChan := make(chan Event)
+	
+	// Count files in the folder to determine optimal buffer size
+	fileCount, err := countFilesInDirectory(f, name)
+	if err != nil {
+		l.Debugln(f.Type(), f.URI(), "Watch: Could not count files in", name, "-", err)
+		fileCount = 1000 // Default assumption
+	}
+	
+	// Use platform-specific buffer size if platform optimizations are enabled
+	// For testing purposes, we keep the original buffer size to avoid breaking tests
+	bufferSize := backendBuffer
+	
+	// Initialize overflow tracking for adaptive buffer management
+	overflowTracker := f.newOverflowTrackerWithConfigFromOptions()
+	
+	// Adjust buffer size based on system resources and folder characteristics
+	adaptiveBufferEnabled := true
+	if f.cfg != nil {
+		adaptiveBufferEnabled = f.cfg.Options().AdaptiveBufferEnabled
+	}
+	
+	if adaptiveBufferEnabled {
+		bufferSize = overflowTracker.getOptimalBufferSize(fileCount)
+	} else {
+		// Fallback to platform-specific buffer size
+		if getPlatformOptimalBufferSize() > bufferSize {
+			bufferSize = getPlatformOptimalBufferSize()
+		}
+	}
+	
+	backendChan := make(chan notify.EventInfo, bufferSize)
+
+	// Use platform-specific event mask
+	eventMask := subEventMask
+	if !ignorePerms {
+		eventMask |= permEventMask
+	}
+
+	absShouldIgnore := func(absPath string) bool {
+		if !utf8.ValidString(absPath) {
+			return true
+		}
+
+		rel, err := f.unrootedChecked(absPath, roots)
+		if err != nil {
+			return true
+		}
+		return ignore.Match(rel).CanSkipDir()
+	}
+	err = notify.WatchWithFilter(watchPath, backendChan, absShouldIgnore, eventMask)
+	if err != nil {
+		notify.Stop(backendChan)
+		// Add Windows-specific error messages
+		if build.IsWindows && isWindowsWatchingError(err) {
+			l.Debugln(f.Type(), f.URI(), "Watch: Windows file watching limitation encountered. Consider excluding large directories or using manual scans.")
+		}
+		if reachedMaxUserWatches(err) {
+			err = errors.New("failed to set up inotify handler. Please increase inotify limits, see https://docs.syncthing.net/users/faq.html#inotify-limits")
+		}
+		return nil, nil, err
+	}
+
+	errChan := make(chan error)
+	go f.watchLoop(ctx, name, roots, backendChan, outChan, errChan, ignore, overflowTracker, fileCount)
+
+	return outChan, errChan, nil
+}
+
+// isWindowsWatchingError checks if an error is a Windows-specific watching error
+func isWindowsWatchingError(err error) bool {
+	// Common Windows file watching errors
+	errorString := err.Error()
+	windowsErrors := []string{
+		"parameter is incorrect",
+		"operation was cancelled",
+		"access is denied",
+		"file system does not support file change notifications",
+	}
+
+	for _, winErr := range windowsErrors {
+		if strings.Contains(strings.ToLower(errorString), winErr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (f *BasicFilesystem) watchLoop(ctx context.Context, name string, roots []string, backendChan chan notify.EventInfo, outChan chan<- Event, errChan chan<- error, ignore Matcher, overflowTracker *overflowTracker, fileCount int) {
+	// Initialize metrics tracking
+	metrics := newWatchMetrics()
+	metrics.logMetrics(f, name) // Start periodic logging
+	
+	// Start Prometheus metrics updates
+	metricsUpdateTicker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for range metricsUpdateTicker.C {
+			metrics.updatePrometheusMetrics(f, overflowTracker)
+		}
+	}()
+	defer metricsUpdateTicker.Stop()
+
+	lastProcessedEvent := time.Now()
+	
+	// Periodically re-evaluate buffer size based on system resources
+	resourceCheckTicker := time.NewTicker(10 * time.Minute)
+	defer resourceCheckTicker.Stop()
+
+	for {
+		// Detect channel overflow
+	if len(backendChan) == cap(backendChan) {
+		outer:
+			for {
+				select {
+				case <-backendChan:
+					metrics.recordDroppedEvent() // Record dropped events
+				default:
+					break outer
+				}
+			}
+			// Record the overflow for adaptive management
+			overflowTracker.recordOverflow()
+			metrics.recordOverflow() // Record for metrics
+
+			// When next scheduling a scan, do it on the entire folder as events have been lost.
+			outChan <- Event{Name: name, Type: NonRemove}
+			l.Debugln(f.Type(), f.URI(), "Watch: Event overflow, send \".\"")
+			// Log a warning when buffer overflows to help with debugging
+			l.Debugln(f.Type(), f.URI(), "Watch: Event buffer overflow detected. Consider increasing buffer size or reducing file change frequency.")
+
+			// Check if we should increase the buffer size based on overflow patterns
+			if overflowTracker.shouldIncreaseBuffer() {
+				newSize := overflowTracker.increaseBuffer()
+				metricBufferResizes.WithLabelValues(f.URI()).Inc()
+				l.Debugln(f.Type(), f.URI(), "Watch: Increasing adaptive buffer size to", newSize, "due to frequent overflows")
+			}
+		}
+		
+		// Check if we should decrease the buffer size based on low activity
+		if overflowTracker.shouldDecreaseBuffer(lastProcessedEvent) {
+			newSize := overflowTracker.decreaseBuffer()
+			metricBufferResizes.WithLabelValues(f.URI()).Inc()
+			l.Debugln(f.Type(), f.URI(), "Watch: Decreasing adaptive buffer size to", newSize, "due to low activity")
+		}
+
+		select {
+		case <-resourceCheckTicker.C:
+			// Periodically re-evaluate buffer size based on system resources
+			adaptiveBufferEnabled := true
+			if f.cfg != nil {
+				adaptiveBufferEnabled = f.cfg.Options().AdaptiveBufferEnabled
+			}
+			
+			if adaptiveBufferEnabled {
+				newSize := overflowTracker.updateBufferSizeBasedOnResources(fileCount)
+				if newSize != cap(backendChan) {
+					metricBufferResizes.WithLabelValues(f.URI()).Inc()
+					l.Debugln(f.Type(), f.URI(), "Watch: Adjusted buffer size to", newSize, "based on system resources")
+				}
+			}
+			
+		case ev := <-backendChan:
+			evPath := ev.Path()
+			lastProcessedEvent = time.Now()
+
+			if !utf8.ValidString(evPath) {
+				l.Debugln(f.Type(), f.URI(), "Watch: Ignoring invalid UTF-8")
+				continue
+			}
+
+			relPath, err := f.unrootedChecked(evPath, roots)
+			if err != nil {
+				select {
+				case errChan <- err:
+					l.Debugln(f.Type(), f.URI(), "Watch: Sending error", err)
+				case <-ctx.Done():
+				}
+				notify.Stop(backendChan)
+				l.Debugln(f.Type(), f.URI(), "Watch: Stopped due to", err)
+				return
+			}
+
+			if ignore.Match(relPath).IsIgnored() {
+				l.Debugln(f.Type(), f.URI(), "Watch: Ignoring", relPath)
+				continue
+			}
+			evType := f.eventType(ev.Event())
+			select {
+			case outChan <- Event{Name: relPath, Type: evType}:
+				metrics.recordEvent() // Record processed event
+				l.Debugln(f.Type(), f.URI(), "Watch: Sending", relPath, evType)
+			case <-ctx.Done():
+				notify.Stop(backendChan)
+				l.Debugln(f.Type(), f.URI(), "Watch: Stopped")
+				return
+			}
+		case <-ctx.Done():
+			notify.Stop(backendChan)
+			// Log final metrics when stopping
+			eventsProcessed, eventsDropped, overflows, _, _ := metrics.getMetrics()
+			l.Debugln(f.Type(), f.URI(), "Watch: Stopped. Final metrics - Processed:", eventsProcessed,
+				"Dropped:", eventsDropped, "Overflows:", overflows)
+			return
+		}
+	}
+}
+
+func (*BasicFilesystem) eventType(notifyType notify.Event) EventType {
+	if notifyType&rmEventMask != 0 {
+		return Remove
+	}
+	return NonRemove
+}
+
+// getSystemMemoryInfo returns information about system memory usage
+func getSystemMemoryInfo() (total, available uint64, err error) {
+	memInfo, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, 0, err
+	}
+	return memInfo.Total, memInfo.Available, nil
+}
+
+// getMemoryPressure returns a normalized memory pressure indicator (0.0-1.0)
+func getMemoryPressure() float64 {
+	memInfo, err := mem.VirtualMemory()
+	if err != nil {
+		// If we can't get memory info, assume medium pressure
+		return 0.5
+	}
+	
+	// Memory pressure is the used memory ratio
+	return memInfo.UsedPercent / 100.0
+}
+
+// getCPUPressure returns a normalized CPU pressure indicator (0.0-1.0)
+func getCPUPressure() float64 {
+	// Get average CPU usage over the last interval
+	_, err := mem.CPUCounts(true)
+	if err != nil {
+		// If we can't get CPU info, assume medium pressure
+		return 0.5
+	}
+	
+	// For now, we'll use a simple heuristic
+	// In a real implementation, we would get actual CPU usage
+	numCPU := runtime.NumCPU()
+	if numCPU > 8 {
+		// High core count systems might be under less pressure
+		return 0.3
+	} else if numCPU < 4 {
+		// Low core count systems might be under more pressure
+		return 0.7
+	}
+	
+	// Medium core count systems
+	return 0.5
+}
+
+// getOptimalBufferSize calculates an optimal buffer size based on system resources and folder characteristics
+func (ot *overflowTracker) getOptimalBufferSize(fileCount int) int {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	
+	// Start with current adaptive buffer size
+	bufferSize := ot.adaptiveBuffer
+	
+	// Get system pressure indicators
+	memoryPressure := getMemoryPressure()
+	cpuPressure := getCPUPressure()
+	
+	// Calculate composite system pressure (0.0-1.0)
+	systemPressure := 0.6*memoryPressure + 0.4*cpuPressure
+	
+	// Adjust buffer size based on system pressure
+	if systemPressure > 0.8 {
+		// High system pressure - reduce buffer size
+		bufferSize = int(float64(bufferSize) * 0.5)
+	} else if systemPressure > 0.6 {
+		// Medium-high system pressure - slightly reduce buffer size
+		bufferSize = int(float64(bufferSize) * 0.75)
+	} else if systemPressure < 0.3 {
+		// Low system pressure - can afford larger buffer
+		bufferSize = int(float64(bufferSize) * 1.5)
+	}
+	
+	// Adjust buffer size based on folder size
+	if fileCount > 50000 {
+		// Very large folder - need larger buffer
+		bufferSize = int(float64(bufferSize) * 2.0)
+	} else if fileCount > 10000 {
+		// Large folder - need larger buffer
+		bufferSize = int(float64(bufferSize) * 1.5)
+	} else if fileCount < 1000 {
+		// Small folder - can use smaller buffer
+		bufferSize = int(float64(bufferSize) * 0.75)
+	}
+	
+	// Ensure buffer size is within bounds
+	if bufferSize < ot.minBufferSize {
+		bufferSize = ot.minBufferSize
+	}
+	if bufferSize > ot.maxBufferSize {
+		bufferSize = ot.maxBufferSize
+	}
+	
+	return bufferSize
+}
+
+// updateBufferSizeBasedOnResources dynamically adjusts the buffer size based on system resources
+func (ot *overflowTracker) updateBufferSizeBasedOnResources(fileCount int) int {
+	optimalSize := ot.getOptimalBufferSize(fileCount)
+	
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
+	
+	// Only adjust if the optimal size is significantly different
+	currentSize := ot.adaptiveBuffer
+	diff := abs(optimalSize - currentSize)
+	
+	// If the difference is more than 20%, adjust the buffer size
+	if diff > currentSize/5 {
+		ot.adaptiveBuffer = optimalSize
+	}
+	
+	return ot.adaptiveBuffer
+}
+
+// abs returns the absolute value of an integer
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}

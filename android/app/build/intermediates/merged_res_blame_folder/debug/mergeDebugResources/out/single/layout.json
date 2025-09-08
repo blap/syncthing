@@ -1,0 +1,30 @@
+[
+    {
+        "merged": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-mergeDebugResources-51:\\layout\\activity_main.xml",
+        "source": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-main-54:\\layout\\activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-mergeDebugResources-51:\\layout\\activity_navigation.xml",
+        "source": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-main-54:\\layout\\activity_navigation.xml"
+    },
+    {
+        "merged": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-mergeDebugResources-51:\\layout\\fragment_folders.xml",
+        "source": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-main-54:\\layout\\fragment_folders.xml"
+    },
+    {
+        "merged": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-mergeDebugResources-51:\\layout\\fragment_dashboard.xml",
+        "source": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-main-54:\\layout\\fragment_dashboard.xml"
+    },
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-51:/layout/activity_main.xml",
+        "source": "com.syncthing.android.app-main-54:/layout/activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-mergeDebugResources-51:\\layout\\fragment_devices.xml",
+        "source": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-main-54:\\layout\\fragment_devices.xml"
+    },
+    {
+        "merged": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-mergeDebugResources-51:\\layout\\fragment_settings.xml",
+        "source": "C:\\Users\\Admin\\.gradle\\daemon\\8.7\\com.syncthing.android.app-main-54:\\layout\\fragment_settings.xml"
+    }
+]

@@ -94,6 +94,12 @@ type FolderConfiguration struct {
 	// Resumable transfers
 	ResumableTransfersEnabled bool `json:"resumableTransfersEnabled" xml:"resumableTransfersEnabled" default:"true"`
 	
+	// Health monitoring and throttling
+	ThrottlingEnabled      bool `json:"throttlingEnabled" xml:"throttlingEnabled" default:"true"`
+	MaxCPUUsagePercent     int  `json:"maxCPUUsagePercent" xml:"maxCPUUsagePercent" default:"80"`
+	MaxMemoryUsageMB       int  `json:"maxMemoryUsageMB" xml:"maxMemoryUsageMB" default:"1024"`
+	HealthCheckIntervalS   int  `json:"healthCheckIntervalS" xml:"healthCheckIntervalS" default:"0"`
+	
 	// Legacy deprecated
 	DeprecatedReadOnly       bool    `json:"-" xml:"ro,attr,omitempty"`        // Deprecated: Do not use.
 	DeprecatedMinDiskFreePct float64 `json:"-" xml:"minDiskFreePct,omitempty"` // Deprecated: Do not use.

@@ -133,6 +133,26 @@ type Model interface {
 	RequestGlobal(ctx context.Context, deviceID protocol.DeviceID, folder, name string, blockNo int, offset int64, size int, hash []byte, fromTemporary bool) ([]byte, error)
 }
 
+// HealthMonitoringModel extends the Model interface with health monitoring capabilities
+type HealthMonitoringModel interface {
+	Model
+
+	// GetAllFoldersHealthStatus returns the health status of all folders
+	GetAllFoldersHealthStatus() map[string]config.FolderHealthStatus
+
+	// GetFolderHealthStatus returns the health status of a specific folder
+	GetFolderHealthStatus(folderID string) (config.FolderHealthStatus, bool)
+
+	// GetAllFoldersPerformanceStats returns performance statistics for all folders
+	GetAllFoldersPerformanceStats() map[string]FolderPerformanceStats
+
+	// GetFolderPerformanceStats returns performance statistics for a specific folder
+	GetFolderPerformanceStats(folderID string) (FolderPerformanceStats, bool)
+}
+
+// Ensure model implements the HealthMonitoringModel interface
+var _ HealthMonitoringModel = (*model)(nil)
+
 type model struct {
 	*suture.Supervisor
 
@@ -178,6 +198,9 @@ type model struct {
 	deviceDownloads                map[protocol.DeviceID]*deviceDownloadState
 	remoteFolderStates             map[protocol.DeviceID]map[string]remoteFolderState // deviceID -> folders
 	indexHandlers                  *serviceMap[protocol.DeviceID, *indexHandlerRegistry]
+
+	// Folder health monitoring
+	folderHealthMonitor *FolderHealthMonitor
 
 	// for testing only
 	foldersRunning atomic.Int32
@@ -263,6 +286,11 @@ func NewModel(cfg config.Wrapper, id protocol.DeviceID, sdb db.DB, protectedFile
 		m.deviceStatRefs[devID] = stats.NewDeviceStatisticsReference(db.NewTyped(sdb, "devicestats/"+devID.String()))
 		m.setConnRequestLimitersLocked(cfg)
 	}
+
+	// Initialize folder health monitor
+	m.folderHealthMonitor = NewFolderHealthMonitor(cfg, m, evLogger)
+	m.Add(m.folderHealthMonitor)
+
 	m.Add(m.folderRunners)
 	m.Add(m.progressEmitter)
 	m.Add(m.indexHandlers)
@@ -3545,4 +3573,36 @@ func without[E comparable, S ~[]E](s S, e E) S {
 		}
 	}
 	return s
+}
+
+// GetAllFoldersHealthStatus returns the health status of all folders
+func (m *model) GetAllFoldersHealthStatus() map[string]config.FolderHealthStatus {
+	if m.folderHealthMonitor == nil {
+		return make(map[string]config.FolderHealthStatus)
+	}
+	return m.folderHealthMonitor.GetAllFoldersHealthStatus()
+}
+
+// GetFolderHealthStatus returns the health status of a specific folder
+func (m *model) GetFolderHealthStatus(folderID string) (config.FolderHealthStatus, bool) {
+	if m.folderHealthMonitor == nil {
+		return config.FolderHealthStatus{}, false
+	}
+	return m.folderHealthMonitor.GetFolderHealthStatus(folderID)
+}
+
+// GetAllFoldersPerformanceStats returns performance statistics for all folders
+func (m *model) GetAllFoldersPerformanceStats() map[string]FolderPerformanceStats {
+	if m.folderHealthMonitor == nil {
+		return make(map[string]FolderPerformanceStats)
+	}
+	return m.folderHealthMonitor.GetAllFoldersPerformanceStats()
+}
+
+// GetFolderPerformanceStats returns performance statistics for a specific folder
+func (m *model) GetFolderPerformanceStats(folderID string) (FolderPerformanceStats, bool) {
+	if m.folderHealthMonitor == nil {
+		return FolderPerformanceStats{}, false
+	}
+	return m.folderHealthMonitor.GetFolderPerformanceStats(folderID)
 }

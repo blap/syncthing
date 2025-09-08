@@ -303,3 +303,25 @@ func (hm *HealthMonitor) IsHealthy() bool {
 	// Consider connection healthy if health score is above 70
 	return hm.healthScore > 70.0
 }
+
+// Add missing methods for enhanced functionality
+
+// GetMonitoringState returns the current monitoring state
+func (hm *HealthMonitor) GetMonitoringState() string {
+	hm.mut.RLock()
+	defer hm.mut.RUnlock()
+	// For now, always return active state
+	// In a more complex implementation, this could track different states
+	return monitoringStateActive
+}
+
+// RecordActivity records connection activity to keep monitoring active
+func (hm *HealthMonitor) RecordActivity() {
+	// This would typically reset any idle timers or counters
+	// For now, it's a placeholder to satisfy the interface
+}
+
+// Add constant for monitoring state
+const (
+	monitoringStateActive = "active"
+)

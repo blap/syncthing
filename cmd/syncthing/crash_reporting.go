@@ -9,10 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +17,7 @@ import (
 	"time"
 
 	"github.com/syncthing/syncthing/internal/slogutil"
+	"github.com/syncthing/syncthing/lib/crashreporting"
 )
 
 const (
@@ -70,53 +68,11 @@ func uploadPanicLog(ctx context.Context, urlBase, file string) error {
 		return err
 	}
 
-	// Remove log lines, for privacy.
-	data = filterLogLines(data)
-
-	hash := fmt.Sprintf("%x", sha256.Sum256(data))
-	slog.InfoContext(ctx, "Reporting crash", slogutil.FilePath(filepath.Base(file)), slog.String("id", hash[:8]))
-
-	url := fmt.Sprintf("%s/%s", urlBase, hash)
-	headReq, err := http.NewRequest(http.MethodHead, url, nil)
-	if err != nil {
-		return err
-	}
-
-	// Set a reasonable timeout on the HEAD request
-	headCtx, headCancel := context.WithTimeout(ctx, headRequestTimeout)
-	defer headCancel()
-	headReq = headReq.WithContext(headCtx)
-
-	resp, err := http.DefaultClient.Do(headReq)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		// It's known, we're done
-		return nil
-	}
-
-	putReq, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-
-	// Set a reasonable timeout on the PUT request
-	putCtx, putCancel := context.WithTimeout(ctx, putRequestTimeout)
-	defer putCancel()
-	putReq = putReq.WithContext(putCtx)
-
-	resp, err = http.DefaultClient.Do(putReq)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("upload: %s", resp.Status)
-	}
-
-	return nil
+	// Create crash reporting client with improved error handling
+	client := crashreporting.NewClient(urlBase)
+	
+	// Report crash with robust error handling and retry logic
+	return client.ReportCrash(ctx, data)
 }
 
 // filterLogLines returns the data without any log lines between the first

@@ -13,10 +13,7 @@ import (
 	"time"
 )
 
-const (
-	stunFilterPriority = 10
-	otherDataPriority  = 100
-)
+// No constants currently defined
 
 type stunFilter struct {
 	ids map[string]time.Time

@@ -99,10 +99,11 @@ func TestClient_UploadWithRetry(t *testing.T) {
 	// Create a test server that fails the first request but succeeds on retry
 	var putRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead {
+		switch r.Method {
+		case http.MethodHead:
 			// HEAD requests return 404 (not reported)
 			w.WriteHeader(http.StatusNotFound)
-		} else if r.Method == http.MethodPut {
+		case http.MethodPut:
 			putRequests++
 			// Fail the first request, succeed on retry
 			if putRequests == 1 {
@@ -112,7 +113,7 @@ func TestClient_UploadWithRetry(t *testing.T) {
 				// Success on retry
 				w.WriteHeader(http.StatusOK)
 			}
-		} else {
+		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}))
@@ -140,14 +141,15 @@ func TestClient_UploadWithRetry(t *testing.T) {
 func TestClient_HTTPError(t *testing.T) {
 	// Create a test server that returns a client error (400)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead {
+		switch r.Method {
+		case http.MethodHead:
 			// HEAD requests return 404 (not reported)
 			w.WriteHeader(http.StatusNotFound)
-		} else if r.Method == http.MethodPut {
+		case http.MethodPut:
 			// Return a client error that shouldn't be retried
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte("Bad request"))
-		} else {
+		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	}))

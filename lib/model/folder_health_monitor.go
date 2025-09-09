@@ -211,7 +211,7 @@ func (fhm *FolderHealthMonitor) performHealthCheck(folderID string) {
 	}
 
 	// Check for predictive issues
-	fhm.checkPredictiveIssues(folderID, folder, healthStatus)
+	fhm.checkPredictiveIssues(folderID, folder)
 
 	// Collect final system stats
 	finalCPU, _ := cpu.Percent(0, false)
@@ -258,7 +258,7 @@ func (fhm *FolderHealthMonitor) performHealthCheck(folderID string) {
 	fhm.applyMemoryOptimization(folderID, memUsage)
 
 	// Update monitoring interval based on folder state
-	fhm.updateMonitoringInterval(folderID, folder, healthStatus)
+	fhm.updateMonitoringInterval(folderID, folder)
 }
 
 // applyMemoryOptimization applies memory optimization techniques when usage is high
@@ -289,7 +289,7 @@ func (fhm *FolderHealthMonitor) applyMemoryOptimization(folderID string, memUsag
 }
 
 // checkPredictiveIssues checks for potential future issues based on performance trends
-func (fhm *FolderHealthMonitor) checkPredictiveIssues(folderID string, folder config.FolderConfiguration, healthStatus config.FolderHealthStatus) {
+func (fhm *FolderHealthMonitor) checkPredictiveIssues(folderID string, folder config.FolderConfiguration) {
 	fhm.perfStatsMut.RLock()
 	defer fhm.perfStatsMut.RUnlock()
 
@@ -475,7 +475,7 @@ func (fhm *FolderHealthMonitor) getHealthCheckInterval(folder config.FolderConfi
 }
 
 // updateMonitoringInterval updates the monitoring interval based on folder health
-func (fhm *FolderHealthMonitor) updateMonitoringInterval(folderID string, folder config.FolderConfiguration, healthStatus config.FolderHealthStatus) {
+func (fhm *FolderHealthMonitor) updateMonitoringInterval(folderID string, folder config.FolderConfiguration) {
 	fhm.tickersMut.Lock()
 	defer fhm.tickersMut.Unlock()
 	

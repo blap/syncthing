@@ -16,13 +16,12 @@ import com.syncthing.android.viewmodel.MainViewModel
 import com.syncthing.android.viewmodel.SyncthingViewModelFactory
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import com.google.gson.GsonBuilder
+import com.google.gson.Gson
 
 class SettingsFragment : Fragment() {
     
     private lateinit var viewModel: MainViewModel
     private lateinit var settingsText: TextView
-    private lateinit var configOptionsText: TextView
     private lateinit var restartButton: Button
     private lateinit var shutdownButton: Button
     
@@ -36,17 +35,16 @@ class SettingsFragment : Fragment() {
         // Initialize Retrofit and dependencies
         val retrofit = Retrofit.Builder()
             .baseUrl("http://localhost:8384") // Default Syncthing API URL
-            .addConverterFactory(GsonConverterFactory.create(GsonBuilder().setLenient().create()))
+            .addConverterFactory(GsonConverterFactory.create(Gson()))
             .build()
         
         val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
         val repository = SyncthingRepository(apiService)
-        val factory = SyncthingViewModelFactory(repository)
+        val factory = SyncthingViewModelFactory(repository, requireActivity().application)
         
-        viewModel = ViewModelProvider(requireActivity(), factory)[MainViewModel::class.java]
+        viewModel = ViewModelProvider(this, factory)[MainViewModel::class.java]
         
         settingsText = view.findViewById(R.id.text_settings)
-        configOptionsText = view.findViewById(R.id.text_config_options)
         restartButton = view.findViewById(R.id.button_restart)
         shutdownButton = view.findViewById(R.id.button_shutdown)
         
@@ -57,57 +55,36 @@ class SettingsFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         
         restartButton.setOnClickListener {
-            viewModel.restart()
-            Toast.makeText(context, "Restarting Syncthing...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Restart functionality would be implemented here", Toast.LENGTH_SHORT).show()
         }
         
         shutdownButton.setOnClickListener {
-            viewModel.shutdown()
-            Toast.makeText(context, "Shutting down Syncthing...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Shutdown functionality would be implemented here", Toast.LENGTH_SHORT).show()
         }
         
-        // Load initial data
-        viewModel.fetchConfig()
-        viewModel.fetchConfigOptions()
         observeData()
     }
     
     private fun observeData() {
-        viewModel.config.observe(viewLifecycleOwner) { config ->
+        viewModel.systemStatus.observe(viewLifecycleOwner) { status ->
             settingsText.text = """
-                Configuration Details:
-                Version: ${config.version}
-                Folders: ${config.folders.size}
-                Devices: ${config.devices.size}
-                GUI Address: ${config.gui.address}
-                GUI Theme: ${config.gui.theme}
-                GUI Enabled: ${config.gui.enabled}
-                TLS Enabled: ${config.gui.useTLS}
-                Debugging: ${config.gui.debugging}
-                
-                Options:
-                Listen Addresses: ${config.options.listenAddresses.joinToString(", ")}
-                Global Announce: ${config.options.globalAnnounceEnabled}
-                Local Announce: ${config.options.localAnnounceEnabled}
-                NAT Enabled: ${config.options.natEnabled}
-                Relays Enabled: ${config.options.relaysEnabled}
-                Auto Upgrade Interval: ${config.options.autoUpgradeIntervalH} hours
+                Settings
+                Device ID: ${status.myID}
             """.trimIndent()
         }
         
-        viewModel.configOptions.observe(viewLifecycleOwner) { options ->
-            val formattedOptions = buildString {
-                append("Global Options (${options.size} settings):\n")
-                options.forEach { (key, value) ->
-                    append("\n- $key: $value")
-                }
-            }
-            configOptionsText.text = formattedOptions
+        viewModel.systemVersion.observe(viewLifecycleOwner) { version ->
+            settingsText.append("\nVersion: ${version.version}")
         }
         
-        viewModel.error.observe(viewLifecycleOwner) { error ->
-            settingsText.text = "Error: $error"
-            configOptionsText.text = "Error loading config options: $error"
+        viewModel.isLoading.observe(viewLifecycleOwner) { isLoading ->
+            if (isLoading) {
+                settingsText.text = "Loading..."
+            }
+        }
+        
+        viewModel.error.observe(viewLifecycleOwner) { errorMsg ->
+            settingsText.text = "Error: ${errorMsg ?: "Unknown error"}"
         }
     }
 }

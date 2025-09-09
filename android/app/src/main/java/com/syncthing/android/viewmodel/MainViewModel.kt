@@ -25,16 +25,20 @@ class MainViewModel(private val repository: SyncthingRepository, application: Ap
     private val _isLoading = MutableLiveData<Boolean>()
     val isLoading: LiveData<Boolean> = _isLoading
     
+    private val _error = MutableLiveData<String?>()
+    val error: LiveData<String?> = _error
+    
     private val versionCheckService = VersionCheckService(application)
     
     fun fetchSystemStatus(apiKey: String) {
         viewModelScope.launch {
             _isLoading.value = true
+            _error.value = null
             try {
                 val status = repository.getSystemStatus(apiKey)
                 _systemStatus.value = status
             } catch (e: Exception) {
-                // Handle error
+                _error.value = e.message ?: "Unknown error"
             } finally {
                 _isLoading.value = false
             }
@@ -44,6 +48,7 @@ class MainViewModel(private val repository: SyncthingRepository, application: Ap
     fun fetchSystemVersion(apiKey: String) {
         viewModelScope.launch {
             _isLoading.value = true
+            _error.value = null
             try {
                 val version = repository.getSystemVersion(apiKey)
                 _systemVersion.value = version
@@ -52,7 +57,7 @@ class MainViewModel(private val repository: SyncthingRepository, application: Ap
                 val compatibilityResult = versionCheckService.checkVersionCompatibility(version)
                 _versionCompatibility.value = compatibilityResult
             } catch (e: Exception) {
-                // Handle error
+                _error.value = e.message ?: "Unknown error"
             } finally {
                 _isLoading.value = false
             }

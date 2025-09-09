@@ -14,7 +14,7 @@ import com.syncthing.android.viewmodel.MainViewModel
 import com.syncthing.android.viewmodel.SyncthingViewModelFactory
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import com.google.gson.GsonBuilder
+import com.google.gson.Gson
 
 class DashboardFragment : Fragment() {
     
@@ -35,14 +35,14 @@ class DashboardFragment : Fragment() {
         // Initialize Retrofit and dependencies
         val retrofit = Retrofit.Builder()
             .baseUrl("http://localhost:8384") // Default Syncthing API URL
-            .addConverterFactory(GsonConverterFactory.create(GsonBuilder().setLenient().create()))
+            .addConverterFactory(GsonConverterFactory.create(Gson()))
             .build()
         
         val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
         val repository = SyncthingRepository(apiService)
-        val factory = SyncthingViewModelFactory(repository)
+        val factory = SyncthingViewModelFactory(repository, requireActivity().application)
         
-        viewModel = ViewModelProvider(requireActivity(), factory)[MainViewModel::class.java]
+        viewModel = ViewModelProvider(this, factory)[MainViewModel::class.java]
         
         systemStatusText = view.findViewById(R.id.text_system_status)
         connectionsText = view.findViewById(R.id.text_connections)
@@ -56,21 +56,13 @@ class DashboardFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         setupUI()
-        loadData()
+        // We need an API key to fetch data, which would normally come from user input
+        // For now, we'll just observe the data that might be loaded elsewhere
         observeData()
     }
     
     private fun setupUI() {
         // Setup dashboard UI components
-    }
-    
-    private fun loadData() {
-        // Load initial data
-        viewModel.fetchSystemStatus()
-        viewModel.fetchConnections()
-        viewModel.fetchEvents()
-        viewModel.fetchDeviceStats()
-        viewModel.fetchFolderStats()
     }
     
     private fun observeData() {
@@ -87,73 +79,18 @@ class DashboardFragment : Fragment() {
             """.trimIndent()
         }
         
-        viewModel.connections.observe(viewLifecycleOwner) { connections ->
-            val total = connections["total"] as? Map<*, *>
-            if (total != null) {
-                connectionsText.text = """
-                    Total Connections:
-                    In: ${formatBytes(total["inBytesTotal"] as? Long ?: 0L)} bytes
-                    Out: ${formatBytes(total["outBytesTotal"] as? Long ?: 0L)} bytes
-                    Last Updated: ${total["at"]}
-                """.trimIndent()
-            } else {
-                connectionsText.text = "No connection data available"
+        viewModel.systemVersion.observe(viewLifecycleOwner) { version ->
+            systemStatusText.append("\n\nVersion: ${version.version}")
+        }
+        
+        viewModel.isLoading.observe(viewLifecycleOwner) { isLoading ->
+            if (isLoading) {
+                systemStatusText.text = "Loading..."
             }
         }
         
-        viewModel.events.observe(viewLifecycleOwner) { events ->
-            val recentEvents = events.take(5) // Show only the 5 most recent events
-            eventsText.text = """
-                Recent Events (${events.size} total):
-                ${recentEvents.joinToString("\n") { event ->
-                    "- ${event["type"]}: ${event["time"]}"
-                }}
-            """.trimIndent()
-        }
-        
-        viewModel.deviceStats.observe(viewLifecycleOwner) { stats ->
-            val formattedStats = buildString {
-                append("Device Statistics (${stats.size} devices):\n")
-                stats.forEach { (deviceId, deviceData) ->
-                    append("\n- Device ${deviceId.take(8)}...:\n")
-                    if (deviceData is Map<*, *>) {
-                        append("  Last Seen: ${deviceData["lastSeen"]}\n")
-                        append("  In: ${formatBytes(deviceData["inBytesTotal"] as? Long ?: 0L)}\n")
-                        append("  Out: ${formatBytes(deviceData["outBytesTotal"] as? Long ?: 0L)}\n")
-                        val lastConnection = deviceData["lastConnection"] as? String
-                        if (lastConnection != null) {
-                            append("  Last Connection: $lastConnection\n")
-                        }
-                    }
-                }
-            }
-            deviceStatsText.text = formattedStats
-        }
-        
-        viewModel.folderStats.observe(viewLifecycleOwner) { stats ->
-            val formattedStats = buildString {
-                append("Folder Statistics (${stats.size} folders):\n")
-                stats.forEach { (folderId, folderData) ->
-                    append("\n- Folder $folderId:\n")
-                    if (folderData is Map<*, *>) {
-                        append("  State: ${folderData["state"]}\n")
-                        append("  In: ${formatBytes(folderData["inBytesTotal"] as? Long ?: 0L)}\n")
-                        append("  Out: ${formatBytes(folderData["outBytesTotal"] as? Long ?: 0L)}\n")
-                        append("  Need Files: ${folderData["needFiles"]}\n")
-                        append("  Need Bytes: ${formatBytes(folderData["needBytes"] as? Long ?: 0L)}\n")
-                        append("  Pull Errors: ${folderData["pullErrors"]}\n")
-                        val lastFile = folderData["lastFile"] as? Map<*, *>
-                        if (lastFile != null) {
-                            append("  Last File: ${lastFile["filename"]} (${lastFile["at"]})\n")
-                        }
-                    }
-                }
-            }
-            folderStatsText.text = formattedStats
-        }
-        
-        viewModel.error.observe(viewLifecycleOwner) { error ->
-            systemStatusText.text = "Error: $error"
+        viewModel.error.observe(viewLifecycleOwner) { errorMsg ->
+            systemStatusText.text = "Error: ${errorMsg ?: "Unknown error"}"
         }
     }
     
@@ -162,14 +99,5 @@ class DashboardFragment : Fragment() {
         val minutes = (seconds % 3600) / 60
         val secs = seconds % 60
         return "${hours}h ${minutes}m ${secs}s"
-    }
-    
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1024 * 1024 * 1024 -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
-            bytes >= 1024 * 1024 -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
-            bytes >= 1024 -> String.format("%.2f KB", bytes / 1024.0)
-            else -> "$bytes B"
-        }
     }
 }

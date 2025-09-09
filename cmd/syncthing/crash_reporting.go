@@ -14,15 +14,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/crashreporting"
-)
-
-const (
-	headRequestTimeout = 10 * time.Second
-	putRequestTimeout  = time.Minute
 )
 
 // uploadPanicLogs attempts to upload all the panic logs in the named

@@ -6,6 +6,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.OneTimeWorkRequestBuilder
 import java.util.concurrent.TimeUnit
 
 class VersionCheckWorker {
@@ -47,7 +48,7 @@ class VersionCheckWorker {
          * Run version check immediately
          */
         fun runImmediateVersionCheck(context: Context) {
-            val versionCheckRequest = androidx.work.OneTimeWorkRequestBuilder<VersionCheckService>()
+            val versionCheckRequest = OneTimeWorkRequestBuilder<VersionCheckService>()
                 .build()
                 
             WorkManager.getInstance(context)

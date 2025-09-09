@@ -31,28 +31,30 @@ class VersionCheckService(
         private const val DESKTOP_API_URL = "http://localhost:8384" // Default Syncthing GUI port
     }
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        try {
-            // Fetch the desktop version
-            val desktopVersion = fetchDesktopVersion()
-            
-            // Get the current Android app version (this would need to be implemented)
-            val androidVersion = getAndroidAppVersion()
-            
-            // Check compatibility
-            val compatibilityResult = VersionCompatibilityChecker.checkCompatibility(
-                androidVersion, 
-                desktopVersion
-            )
-            
-            // If update is needed, show notification
-            if (compatibilityResult.needsUpdate) {
-                showUpdateNotification(compatibilityResult)
+    override suspend fun doWork(): Result {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Fetch the desktop version
+                val desktopVersion = fetchDesktopVersion()
+                
+                // Get the current Android app version (this would need to be implemented)
+                val androidVersion = getAndroidAppVersion()
+                
+                // Check compatibility
+                val compatibilityResult = VersionCompatibilityChecker.checkCompatibility(
+                    androidVersion, 
+                    desktopVersion
+                )
+                
+                // If update is needed, show notification
+                if (compatibilityResult.needsUpdate && compatibilityResult.updateMessage != null) {
+                    showUpdateNotification(compatibilityResult)
+                }
+                
+                Result.success()
+            } catch (e: Exception) {
+                Result.failure()
             }
-            
-            Result.success()
-        } catch (e: Exception) {
-            Result.failure()
         }
     }
 
@@ -107,7 +109,7 @@ class VersionCheckService(
     /**
      * Show a notification when an update is available
      */
-    private fun showUpdateNotification(compatibilityResult: VersionCompatibilityChecker.Companion.CompatibilityResult) {
+    private fun showUpdateNotification(compatibilityResult: VersionCompatibilityChecker.CompatibilityResult) {
         val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         
         // Create notification channel for Android O+
@@ -133,7 +135,7 @@ class VersionCheckService(
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification) // You would need to add this drawable
             .setContentTitle("Syncthing Update Available")
-            .setContentText(compatibilityResult.updateMessage)
+            .setContentText(compatibilityResult.updateMessage ?: "Update available")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

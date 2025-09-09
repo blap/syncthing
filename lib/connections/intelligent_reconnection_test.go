@@ -8,5 +8,3 @@ package connections
 
 // This file previously contained unused helper functions for exponential backoff calculations.
 // These functions have been removed as they were not used anywhere in the codebase.
-
-}

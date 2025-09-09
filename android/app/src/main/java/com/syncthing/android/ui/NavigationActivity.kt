@@ -34,7 +34,7 @@ class NavigationActivity : AppCompatActivity() {
         
         val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
         val repository = SyncthingRepository(apiService)
-        val factory = SyncthingViewModelFactory(repository)
+        val factory = SyncthingViewModelFactory(repository, application)
         
         viewModel = ViewModelProvider(this, factory)[MainViewModel::class.java]
         

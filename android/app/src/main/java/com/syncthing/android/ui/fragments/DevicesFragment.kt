@@ -14,7 +14,7 @@ import com.syncthing.android.viewmodel.MainViewModel
 import com.syncthing.android.viewmodel.SyncthingViewModelFactory
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import com.google.gson.GsonBuilder
+import com.google.gson.Gson
 
 class DevicesFragment : Fragment() {
     
@@ -32,14 +32,14 @@ class DevicesFragment : Fragment() {
         // Initialize Retrofit and dependencies
         val retrofit = Retrofit.Builder()
             .baseUrl("http://localhost:8384") // Default Syncthing API URL
-            .addConverterFactory(GsonConverterFactory.create(GsonBuilder().setLenient().create()))
+            .addConverterFactory(GsonConverterFactory.create(Gson()))
             .build()
         
         val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
         val repository = SyncthingRepository(apiService)
-        val factory = SyncthingViewModelFactory(repository)
+        val factory = SyncthingViewModelFactory(repository, requireActivity().application)
         
-        viewModel = ViewModelProvider(requireActivity(), factory)[MainViewModel::class.java]
+        viewModel = ViewModelProvider(this, factory)[MainViewModel::class.java]
         
         devicesText = view.findViewById(R.id.text_devices)
         deviceStatsText = view.findViewById(R.id.text_device_stats)
@@ -49,78 +49,22 @@ class DevicesFragment : Fragment() {
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        loadData()
         observeData()
     }
     
-    private fun loadData() {
-        // Load devices data
-        viewModel.fetchConnections()
-        viewModel.fetchDeviceStats()
-        viewModel.fetchConfigDevices()
-    }
-    
     private fun observeData() {
-        viewModel.connections.observe(viewLifecycleOwner) { connections ->
-            val formattedConnections = buildString {
-                append("Device Connections (${connections.size - 1} devices):\n") // -1 for "total"
-                connections.forEach { (deviceId, connectionData) ->
-                    if (deviceId != "total" && connectionData is Map<*, *>) {
-                        append("\n- Device $deviceId:\n")
-                        append("  Connected: ${connectionData["connected"]}\n")
-                        append("  In: ${formatBytes(connectionData["inBytesTotal"] as? Long ?: 0)}\n")
-                        append("  Out: ${formatBytes(connectionData["outBytesTotal"] as? Long ?: 0)}\n")
-                        append("  Type: ${connectionData["type"]}\n")
-                        val address = connectionData["address"] as? String
-                        if (address != null) {
-                            append("  Address: $address\n")
-                        }
-                        val clientVersion = connectionData["clientVersion"] as? String
-                        if (clientVersion != null) {
-                            append("  Client Version: $clientVersion\n")
-                        }
-                    }
-                }
-            }
-            devicesText.text = formattedConnections
+        viewModel.systemStatus.observe(viewLifecycleOwner) { status ->
+            devicesText.text = "Device ID: ${status.myID}"
         }
         
-        viewModel.deviceStats.observe(viewLifecycleOwner) { stats ->
-            val formattedStats = buildString {
-                append("Device Statistics (${stats.size} devices):\n")
-                stats.forEach { (deviceId, deviceData) ->
-                    append("\n- Device ${deviceId.take(8)}...:\n")
-                    if (deviceData is Map<*, *>) {
-                        append("  Last Seen: ${deviceData["lastSeen"]}\n")
-                        append("  In: ${formatBytes(deviceData["inBytesTotal"] as? Long ?: 0)}\n")
-                        append("  Out: ${formatBytes(deviceData["outBytesTotal"] as? Long ?: 0)}\n")
-                        val lastConnection = deviceData["lastConnection"] as? String
-                        if (lastConnection != null) {
-                            append("  Last Connection: $lastConnection\n")
-                        }
-                    }
-                }
-            }
-            deviceStatsText.text = formattedStats
-        }
-        
-        viewModel.configDevices.observe(viewLifecycleOwner) { devices ->
-            if (deviceStatsText.text.startsWith("Device Statistics")) {
-                deviceStatsText.text = deviceStatsText.text.toString() + "\n\nConfig Devices: ${devices.size}"
+        viewModel.isLoading.observe(viewLifecycleOwner) { isLoading ->
+            if (isLoading) {
+                devicesText.text = "Loading..."
             }
         }
         
-        viewModel.error.observe(viewLifecycleOwner) { error ->
-            devicesText.text = "Error: $error"
-        }
-    }
-    
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1024 * 1024 * 1024 -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
-            bytes >= 1024 * 1024 -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
-            bytes >= 1024 -> String.format("%.2f KB", bytes / 1024.0)
-            else -> "$bytes B"
+        viewModel.error.observe(viewLifecycleOwner) { errorMsg ->
+            devicesText.text = "Error: ${errorMsg ?: "Unknown error"}"
         }
     }
 }

@@ -1,0 +1,26 @@
+[
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-45:/layout/fragment_dashboard.xml",
+        "source": "com.syncthing.android.app-main-48:/layout/fragment_dashboard.xml"
+    },
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-45:/layout/activity_main.xml",
+        "source": "com.syncthing.android.app-main-48:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-45:/layout/fragment_folders.xml",
+        "source": "com.syncthing.android.app-main-48:/layout/fragment_folders.xml"
+    },
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-45:/layout/activity_navigation.xml",
+        "source": "com.syncthing.android.app-main-48:/layout/activity_navigation.xml"
+    },
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-45:/layout/fragment_devices.xml",
+        "source": "com.syncthing.android.app-main-48:/layout/fragment_devices.xml"
+    },
+    {
+        "merged": "com.syncthing.android.app-mergeDebugResources-45:/layout/fragment_settings.xml",
+        "source": "com.syncthing.android.app-main-48:/layout/fragment_settings.xml"
+    }
+]

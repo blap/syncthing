@@ -2,7 +2,7 @@
 
 ## Prerequisites
 - Android Studio or Gradle installed
-- JDK 11 or higher
+- JDK 24 or higher
 - Android SDK with API level 34
 
 ## Building the App
@@ -71,9 +71,9 @@ android/
 - [MainViewModel]: Central ViewModel for managing app state
 
 ## Dependencies
-- Kotlin 1.9.0
+- Kotlin 2.2.0
 - AndroidX libraries
-- Retrofit for REST API communication
+- Retrofit 3.0.0 for REST API communication
 - Gson for JSON serialization
 - Mockito for unit testing
 - Material Design components

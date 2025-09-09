@@ -69,7 +69,7 @@ type FolderHealthMonitor struct {
 	// Performance monitoring
 	performanceStats map[string]FolderPerformanceStats
 	perfStatsMut     sync.RWMutex
-	
+
 	// Memory optimization
 	memoryLimiter *MemoryLimiter
 }
@@ -178,7 +178,7 @@ func (fhm *FolderHealthMonitor) performHealthCheck(folderID string) {
 
 	// Collect initial system stats
 	initialCPU, _ := cpu.Percent(0, false)
-	initialMem, _ := mem.VirtualMemory()
+	initialMem, initialMemErr := mem.VirtualMemory()
 
 	// Get folder configuration
 	folder, ok := fhm.cfg.Folder(folderID)
@@ -215,7 +215,7 @@ func (fhm *FolderHealthMonitor) performHealthCheck(folderID string) {
 
 	// Collect final system stats
 	finalCPU, _ := cpu.Percent(0, false)
-	finalMem, _ := mem.VirtualMemory()
+	finalMem, finalMemErr := mem.VirtualMemory()
 
 	// Calculate performance metrics
 	checkDuration := time.Since(startTime)
@@ -223,9 +223,26 @@ func (fhm *FolderHealthMonitor) performHealthCheck(folderID string) {
 	if len(initialCPU) > 0 && len(finalCPU) > 0 {
 		cpuUsage = (initialCPU[0] + finalCPU[0]) / 2
 	}
-	memUsage := finalMem.Used
-	if initialMem != nil {
-		memUsage = finalMem.Used - initialMem.Used
+
+	// Calculate memory usage with proper error handling
+	var memUsage uint64
+	if initialMemErr != nil || finalMemErr != nil {
+		// If we can't get memory stats, use 0 as default
+		memUsage = 0
+		slog.Debug("Failed to collect memory statistics for folder health check",
+			"folder", folderID,
+			"initialError", initialMemErr,
+			"finalError", finalMemErr)
+	} else if initialMem != nil {
+		// Calculate the difference in memory usage
+		if finalMem.Used > initialMem.Used {
+			memUsage = finalMem.Used - initialMem.Used
+		} else {
+			memUsage = 0 // Memory usage decreased or stayed the same
+		}
+	} else {
+		// If initialMem is nil but finalMem is not, use finalMem.Used
+		memUsage = finalMem.Used
 	}
 
 	// Update performance stats
@@ -267,10 +284,10 @@ func (fhm *FolderHealthMonitor) applyMemoryOptimization(folderID string, memUsag
 		slog.Debug("High memory usage detected, applying optimization",
 			"folder", folderID,
 			"memoryBytes", memUsage)
-		
+
 		// Trigger garbage collection to free unused memory
 		runtime.GC()
-		
+
 		// Apply memory limiting to the folder if it supports it
 		if f, ok := fhm.model.(*model).folderRunners.Get(folderID); ok {
 			if memoryLimiter, ok := f.(interface{ SetMemoryLimit(limit int64) }); ok {
@@ -349,7 +366,9 @@ func (fhm *FolderHealthMonitor) checkPredictiveIssues(folderID string, folder co
 
 		// Check memory usage (convert MB to bytes)
 		maxMemoryBytes := uint64(folder.MaxMemoryUsageMB) * 1024 * 1024
-		if stats.MemoryUsageBytes > maxMemoryBytes {
+
+		// Add sanity check to prevent extremely high memory usage values from being reported
+		if stats.MemoryUsageBytes > maxMemoryBytes && stats.MemoryUsageBytes < 100*1024*1024*1024 { // Less than 100GB
 			slog.Warn("High memory usage detected for folder, throttling may be needed",
 				"folder", folderID,
 				"memoryBytes", stats.MemoryUsageBytes,
@@ -375,7 +394,8 @@ func (fhm *FolderHealthMonitor) checkPredictiveIssues(folderID string, folder co
 		})
 	}
 
-	if stats.MemoryUsageBytes > 1024*1024*1024 { // 1GB
+	// Add sanity check for memory usage reporting
+	if stats.MemoryUsageBytes > 1024*1024*1024 && stats.MemoryUsageBytes < 100*1024*1024*1024 { // Between 1GB and 100GB
 		slog.Warn("High memory usage detected for folder",
 			"folder", folderID,
 			"memoryBytes", stats.MemoryUsageBytes)
@@ -426,13 +446,13 @@ func (fhm *FolderHealthMonitor) updatePerformanceStats(folderID string, duration
 // checkFolderHealth performs a health check on a folder configuration
 func (fhm *FolderHealthMonitor) checkFolderHealth(folder config.FolderConfiguration) config.FolderHealthStatus {
 	startTime := time.Now()
-	
+
 	// Perform the actual health check
 	err := folder.CheckPath()
-	
+
 	// Calculate check duration
 	checkDuration := time.Since(startTime)
-	
+
 	// Create health status
 	healthStatus := config.FolderHealthStatus{
 		Healthy:       err == nil,
@@ -440,11 +460,11 @@ func (fhm *FolderHealthMonitor) checkFolderHealth(folder config.FolderConfigurat
 		LastChecked:   time.Now(),
 		CheckDuration: checkDuration,
 	}
-	
+
 	if err != nil {
 		healthStatus.Issues = append(healthStatus.Issues, err.Error())
 	}
-	
+
 	return healthStatus
 }
 
@@ -454,22 +474,22 @@ func (fhm *FolderHealthMonitor) getHealthCheckInterval(folder config.FolderConfi
 	if folder.HealthCheckIntervalS > 0 {
 		return time.Duration(folder.HealthCheckIntervalS) * time.Second
 	}
-	
+
 	// Default behavior based on folder state
 	if folder.Paused {
 		return pausedHealthCheckInterval
 	}
-	
+
 	// Check last performance stats to determine if folder is active
 	fhm.perfStatsMut.RLock()
 	stats, exists := fhm.performanceStats[folderID]
 	fhm.perfStatsMut.RUnlock()
-	
+
 	if exists && stats.LastCheckTime.After(time.Now().Add(-10*time.Minute)) {
 		// Folder has been recently active
 		return defaultHealthCheckInterval
 	}
-	
+
 	// Folder is likely inactive
 	return inactiveHealthCheckInterval
 }
@@ -478,21 +498,21 @@ func (fhm *FolderHealthMonitor) getHealthCheckInterval(folder config.FolderConfi
 func (fhm *FolderHealthMonitor) updateMonitoringInterval(folderID string, folder config.FolderConfiguration) {
 	fhm.tickersMut.Lock()
 	defer fhm.tickersMut.Unlock()
-	
+
 	ticker, exists := fhm.folderTickers[folderID]
 	if !exists {
 		return
 	}
-	
+
 	// Determine new interval
 	newInterval := fhm.getHealthCheckInterval(folder, folderID)
-	
+
 	// Only update if interval has changed significantly
 	if currentInterval := ticker.C; currentInterval != nil {
 		// We can't directly check the ticker's duration, so we'll reset if needed
 		ticker.Reset(newInterval)
-		slog.Debug("Updated health check interval", 
-			"folder", folderID, 
+		slog.Debug("Updated health check interval",
+			"folder", folderID,
 			"interval", newInterval)
 	}
 }
@@ -501,12 +521,12 @@ func (fhm *FolderHealthMonitor) updateMonitoringInterval(folderID string, folder
 func (fhm *FolderHealthMonitor) hasHealthStatusChanged(folderID string, newStatus config.FolderHealthStatus) bool {
 	fhm.healthStatusMut.RLock()
 	defer fhm.healthStatusMut.RUnlock()
-	
+
 	oldStatus, exists := fhm.lastHealthStatus[folderID]
 	if !exists {
 		return true
 	}
-	
+
 	// Compare health status
 	return oldStatus.Healthy != newStatus.Healthy
 }
@@ -515,11 +535,11 @@ func (fhm *FolderHealthMonitor) hasHealthStatusChanged(folderID string, newStatu
 func (fhm *FolderHealthMonitor) cleanup() {
 	fhm.tickersMut.Lock()
 	defer fhm.tickersMut.Unlock()
-	
+
 	for _, ticker := range fhm.folderTickers {
 		ticker.Stop()
 	}
-	
+
 	fhm.folderTickers = make(map[string]*time.Ticker)
 }
 
@@ -528,29 +548,29 @@ func (fhm *FolderHealthMonitor) CommitConfiguration(from, to config.Configuratio
 	// Handle folder additions/removals
 	fromFolders := make(map[string]config.FolderConfiguration)
 	toFolders := make(map[string]config.FolderConfiguration)
-	
+
 	for _, folder := range from.Folders {
 		fromFolders[folder.ID] = folder
 	}
-	
+
 	for _, folder := range to.Folders {
 		toFolders[folder.ID] = folder
 	}
-	
+
 	// Stop monitoring removed folders
 	for id := range fromFolders {
 		if _, exists := toFolders[id]; !exists {
 			fhm.stopMonitoringFolder(id)
 		}
 	}
-	
+
 	// Start monitoring new folders
 	for id := range toFolders {
 		if _, exists := fromFolders[id]; !exists {
 			fhm.startMonitoringFolder(id)
 		}
 	}
-	
+
 	return true
 }
 
@@ -563,7 +583,7 @@ func (fhm *FolderHealthMonitor) String() string {
 func (fhm *FolderHealthMonitor) GetAllFoldersHealthStatus() map[string]config.FolderHealthStatus {
 	fhm.healthStatusMut.RLock()
 	defer fhm.healthStatusMut.RUnlock()
-	
+
 	// Create a copy of the map to avoid race conditions
 	result := make(map[string]config.FolderHealthStatus, len(fhm.lastHealthStatus))
 	for k, v := range fhm.lastHealthStatus {
@@ -576,7 +596,7 @@ func (fhm *FolderHealthMonitor) GetAllFoldersHealthStatus() map[string]config.Fo
 func (fhm *FolderHealthMonitor) GetFolderHealthStatus(folderID string) (config.FolderHealthStatus, bool) {
 	fhm.healthStatusMut.RLock()
 	defer fhm.healthStatusMut.RUnlock()
-	
+
 	status, exists := fhm.lastHealthStatus[folderID]
 	return status, exists
 }
@@ -585,7 +605,7 @@ func (fhm *FolderHealthMonitor) GetFolderHealthStatus(folderID string) (config.F
 func (fhm *FolderHealthMonitor) GetAllFoldersPerformanceStats() map[string]FolderPerformanceStats {
 	fhm.perfStatsMut.RLock()
 	defer fhm.perfStatsMut.RUnlock()
-	
+
 	// Create a copy of the map to avoid race conditions
 	result := make(map[string]FolderPerformanceStats, len(fhm.performanceStats))
 	for k, v := range fhm.performanceStats {
@@ -598,7 +618,7 @@ func (fhm *FolderHealthMonitor) GetAllFoldersPerformanceStats() map[string]Folde
 func (fhm *FolderHealthMonitor) GetFolderPerformanceStats(folderID string) (FolderPerformanceStats, bool) {
 	fhm.perfStatsMut.RLock()
 	defer fhm.perfStatsMut.RUnlock()
-	
+
 	stats, exists := fhm.performanceStats[folderID]
 	return stats, exists
 }

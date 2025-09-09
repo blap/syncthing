@@ -82,10 +82,26 @@ func newAndroidWatcher(fs *BasicFilesystem, name string, ignore Matcher, ctx con
 
 	err = notify.WatchWithFilter(watchPath, backendChan, absShouldIgnore, eventMask)
 	if err != nil {
+		// Add detailed logging for inotify errors
+		slog.Warn("Failed to set up inotify watcher on Android",
+			"path", watchPath,
+			"error", err,
+			"bufferSize", bufferSize,
+			"fileCount", fileCount)
+
 		notify.Stop(backendChan)
 		// Check for inotify limits
 		if reachedMaxUserWatches(err) {
 			err = errors.New("failed to set up inotify handler. Please increase inotify limits, see https://docs.syncthing.net/users/faq.html#inotify-limits")
+			slog.Error("Inotify limit reached on Android device",
+				"path", watchPath,
+				"error", err)
+		} else {
+			// Log other types of errors
+			slog.Error("Failed to set up filesystem watcher on Android",
+				"path", watchPath,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err))
 		}
 		return nil, err
 	}
@@ -112,6 +128,13 @@ func newAndroidWatcher(fs *BasicFilesystem, name string, ignore Matcher, ctx con
 	// Apply Android-specific optimizations
 	w.optimizeForAndroid()
 
+	// Log successful watcher creation
+	slog.Info("Successfully created Android filesystem watcher",
+		"folder", name,
+		"path", watchPath,
+		"bufferSize", bufferSize,
+		"fileCount", fileCount)
+
 	return w, nil
 }
 
@@ -135,6 +158,12 @@ func (w *androidWatcher) watchLoop() {
 	resourceCheckTicker := time.NewTicker(10 * time.Minute)
 	defer resourceCheckTicker.Stop()
 
+	// Log initial buffer configuration
+	slog.Debug("Starting Android watcher loop",
+		"folder", w.folderName,
+		"bufferSize", cap(w.backendChan),
+		"fileCount", w.fileCount)
+
 	for {
 		// Detect channel overflow
 		if len(w.backendChan) == cap(w.backendChan) {
@@ -153,15 +182,24 @@ func (w *androidWatcher) watchLoop() {
 
 			// When next scheduling a scan, do it on the entire folder as events have been lost.
 			w.outChan <- Event{Name: w.folderName, Type: NonRemove}
-			log.Println(w.fs.Type(), w.fs.URI(), "Watch: Event overflow, send \".\"")
+			slog.Warn("Event overflow in Android filesystem watcher, sending full scan trigger",
+				"folder", w.folderName,
+				"bufferSize", cap(w.backendChan),
+				"droppedEvents", len(w.backendChan))
 			// Log a warning when buffer overflows to help with debugging
-			log.Println(w.fs.Type(), w.fs.URI(), "Watch: Event buffer overflow detected. Consider increasing buffer size or reducing file change frequency.")
+			slog.Warn("Event buffer overflow detected in Android watcher. Consider increasing buffer size or reducing file change frequency.",
+				"folder", w.folderName,
+				"bufferSize", cap(w.backendChan),
+				"fileCount", w.fileCount)
 
 			// Check if we should increase the buffer size based on overflow patterns
 			if w.overflowTracker.shouldIncreaseBuffer() {
 				newSize := w.overflowTracker.increaseBuffer()
 				metricBufferResizes.WithLabelValues(w.fs.URI()).Inc()
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Increasing adaptive buffer size to", newSize, "due to frequent overflows")
+				slog.Info("Increasing adaptive buffer size due to frequent overflows",
+					"folder", w.folderName,
+					"oldSize", cap(w.backendChan),
+					"newSize", newSize)
 			}
 		}
 
@@ -169,7 +207,10 @@ func (w *androidWatcher) watchLoop() {
 		if w.overflowTracker.shouldDecreaseBuffer(lastProcessedEvent) {
 			newSize := w.overflowTracker.decreaseBuffer()
 			metricBufferResizes.WithLabelValues(w.fs.URI()).Inc()
-			log.Println(w.fs.Type(), w.fs.URI(), "Watch: Decreasing adaptive buffer size to", newSize, "due to low activity")
+			slog.Debug("Decreasing adaptive buffer size due to low activity",
+				"folder", w.folderName,
+				"oldSize", cap(w.backendChan),
+				"newSize", newSize)
 		}
 
 		select {
@@ -178,7 +219,10 @@ func (w *androidWatcher) watchLoop() {
 			newSize := w.overflowTracker.updateBufferSizeBasedOnResources(w.fileCount)
 			if newSize != cap(w.backendChan) {
 				metricBufferResizes.WithLabelValues(w.fs.URI()).Inc()
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Adjusted buffer size to", newSize, "based on system resources")
+				slog.Info("Adjusted buffer size based on system resources",
+					"folder", w.folderName,
+					"oldSize", cap(w.backendChan),
+					"newSize", newSize)
 			}
 
 		case ev := <-w.backendChan:
@@ -186,7 +230,9 @@ func (w *androidWatcher) watchLoop() {
 			lastProcessedEvent = time.Now()
 
 			if !utf8.ValidString(evPath) {
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Ignoring invalid UTF-8")
+				slog.Debug("Ignoring invalid UTF-8 path in Android watcher",
+					"folder", w.folderName,
+					"path", evPath)
 				continue
 			}
 
@@ -194,33 +240,49 @@ func (w *androidWatcher) watchLoop() {
 			if err != nil {
 				select {
 				case w.errChan <- err:
-					log.Println(w.fs.Type(), w.fs.URI(), "Watch: Sending error", err)
+					slog.Warn("Sending error from Android watcher",
+						"folder", w.folderName,
+						"error", err,
+						"path", evPath)
 				case <-w.ctx.Done():
 				}
 				notify.Stop(w.backendChan)
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Stopped due to", err)
+				slog.Info("Stopped Android watcher due to error",
+					"folder", w.folderName,
+					"error", err)
 				return
 			}
 
 			if w.ignore.Match(relPath).IsIgnored() {
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Ignoring", relPath)
+				slog.Debug("Ignoring path in Android watcher",
+					"folder", w.folderName,
+					"path", relPath)
 				continue
 			}
 			evType := w.fs.eventType(ev.Event())
 			select {
 			case w.outChan <- Event{Name: relPath, Type: evType}:
 				w.watchMetrics.recordEvent() // Record processed event
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Sending", relPath, evType)
+				slog.Debug("Sending event from Android watcher",
+					"folder", w.folderName,
+					"path", relPath,
+					"type", evType)
 			case <-w.ctx.Done():
 				notify.Stop(w.backendChan)
-				log.Println(w.fs.Type(), w.fs.URI(), "Watch: Stopped")
+				// Log final metrics when stopping
+				_, _, overflows, _, _ := w.watchMetrics.getMetrics()
+				slog.Info("Stopped Android watcher",
+					"folder", w.folderName,
+					"finalOverflows", overflows)
 				return
 			}
 		case <-w.ctx.Done():
 			notify.Stop(w.backendChan)
 			// Log final metrics when stopping
 			_, _, overflows, _, _ := w.watchMetrics.getMetrics()
-			log.Println(w.fs.Type(), w.fs.URI(), "Watch: Stopped. Final metrics - Overflows:", overflows)
+			slog.Info("Stopped Android watcher due to context cancellation",
+				"folder", w.folderName,
+				"finalOverflows", overflows)
 			return
 		}
 	}

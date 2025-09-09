@@ -23,6 +23,12 @@ import (
 	"github.com/syncthing/syncthing/lib/svcutil"
 )
 
+var (
+	// Add retry configuration
+	maxRetries = 3
+	retryDelay = time.Second
+)
+
 func init() {
 	nat.Register(Discover)
 }
@@ -35,30 +41,56 @@ func Discover(ctx context.Context, renewal, timeout time.Duration) []nat.Device 
 		return err
 	})
 	if err != nil {
-		l.Debugln("Failed to discover gateway", err)
+		slog.Debug("Failed to discover gateway", "error", err)
 		return nil
 	}
 	if ip == nil || ip.IsUnspecified() {
 		return nil
 	}
 
-	l.Debugln("Discovered gateway at", ip)
+	slog.Debug("Discovered gateway at", "ip", ip)
 
 	c := natpmp.NewClientWithTimeout(ip, timeout)
 	// Try contacting the gateway, if it does not respond, assume it does not
 	// speak NAT-PMP.
-	err = svcutil.CallWithContext(ctx, func() error {
-		_, ierr := c.GetExternalAddress()
-		return ierr
-	})
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
+
+	// Add retry mechanism for external address retrieval
+	var ierr error
+	for i := 0; i < maxRetries; i++ {
+		ierr = svcutil.CallWithContext(ctx, func() error {
+			_, err := c.GetExternalAddress()
+			return err
+		})
+		if ierr == nil {
+			break
+		}
+
+		// Log retry attempt
+		slog.Debug("Failed to get external address from NAT-PMP gateway, retrying",
+			"attempt", i+1,
+			"maxRetries", maxRetries,
+			"error", ierr)
+
+		// Wait before retrying (exponential backoff)
+		select {
+		case <-time.After(retryDelay * time.Duration(1<<uint(i))):
+		case <-ctx.Done():
 			return nil
 		}
-		if strings.Contains(err.Error(), "Timed out") {
+	}
+
+	if ierr != nil {
+		if errors.Is(ierr, context.Canceled) {
+			return nil
+		}
+		if strings.Contains(ierr.Error(), "Timed out") {
 			slog.Debug("Timeout trying to get external address, assume no NAT-PMP available")
 			return nil
 		}
+		// Log the error but continue - some routers might still support port mapping
+		slog.Warn("Failed to get external address from NAT-PMP gateway",
+			"error", ierr,
+			"gateway", ip)
 	}
 
 	var localIP net.IP
@@ -70,7 +102,7 @@ func Discover(ctx context.Context, renewal, timeout time.Duration) []nat.Device 
 		conn.Close()
 		localIP, err = osutil.IPFromAddr(conn.LocalAddr())
 		if localIP == nil {
-			l.Debugln("Failed to lookup local IP", err)
+			slog.Debug("Failed to lookup local IP", "error", err)
 		}
 	}
 
@@ -104,16 +136,61 @@ func (w *wrapper) AddPortMapping(ctx context.Context, protocol nat.Protocol, int
 	if duration == 0 {
 		duration = w.renewal
 	}
+
+	// Add retry mechanism for port mapping
 	var result *natpmp.AddPortMappingResult
-	err := svcutil.CallWithContext(ctx, func() error {
-		var err error
-		result, err = w.client.AddPortMapping(strings.ToLower(string(protocol)), internalPort, externalPort, int(duration/time.Second))
-		return err
-	})
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		err = svcutil.CallWithContext(ctx, func() error {
+			var ierr error
+			result, ierr = w.client.AddPortMapping(strings.ToLower(string(protocol)), internalPort, externalPort, int(duration/time.Second))
+			return ierr
+		})
+		if err == nil {
+			break
+		}
+
+		// Log retry attempt
+		slog.Debug("Failed to add port mapping via NAT-PMP, retrying",
+			"attempt", i+1,
+			"maxRetries", maxRetries,
+			"protocol", protocol,
+			"internalPort", internalPort,
+			"externalPort", externalPort,
+			"error", err)
+
+		// Check for specific errors that shouldn't be retried
+		if strings.Contains(err.Error(), "connection refused") {
+			slog.Warn("Connection refused when trying to add NAT-PMP port mapping",
+				"gateway", w.gatewayIP,
+				"error", err)
+			// Don't retry connection refused errors
+			break
+		}
+
+		// Wait before retrying (exponential backoff)
+		select {
+		case <-time.After(retryDelay * time.Duration(1<<uint(i))):
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+
 	port := 0
 	if result != nil {
 		port = int(result.MappedExternalPort)
 	}
+
+	if err != nil {
+		slog.Warn("Failed to add port mapping via NAT-PMP after retries",
+			"gateway", w.gatewayIP,
+			"protocol", protocol,
+			"internalPort", internalPort,
+			"externalPort", externalPort,
+			"error", err)
+	}
+
 	return port, err
 }
 
@@ -129,12 +206,34 @@ func (*wrapper) SupportsIPVersion(version nat.IPVersion) bool {
 }
 
 func (w *wrapper) GetExternalIPv4Address(ctx context.Context) (net.IP, error) {
+	// Add retry mechanism for external address retrieval
 	var result *natpmp.GetExternalAddressResult
-	err := svcutil.CallWithContext(ctx, func() error {
-		var err error
-		result, err = w.client.GetExternalAddress()
-		return err
-	})
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		err = svcutil.CallWithContext(ctx, func() error {
+			var ierr error
+			result, ierr = w.client.GetExternalAddress()
+			return ierr
+		})
+		if err == nil {
+			break
+		}
+
+		// Log retry attempt
+		slog.Debug("Failed to get external address via NAT-PMP, retrying",
+			"attempt", i+1,
+			"maxRetries", maxRetries,
+			"error", err)
+
+		// Wait before retrying (exponential backoff)
+		select {
+		case <-time.After(retryDelay * time.Duration(1<<uint(i))):
+		case <-ctx.Done():
+			return net.IPv4zero, ctx.Err()
+		}
+	}
+
 	ip := net.IPv4zero
 	if result != nil {
 		ip = net.IPv4(
@@ -144,5 +243,12 @@ func (w *wrapper) GetExternalIPv4Address(ctx context.Context) (net.IP, error) {
 			result.ExternalIPAddress[3],
 		)
 	}
+
+	if err != nil {
+		slog.Warn("Failed to get external address via NAT-PMP after retries",
+			"gateway", w.gatewayIP,
+			"error", err)
+	}
+
 	return ip, err
 }

@@ -203,7 +203,12 @@ func (t *quicListener) serve(ctx context.Context) error {
 		if isLocal {
 			priority = t.cfg.Options().ConnectionPriorityQUICLAN
 		}
-		t.conns <- newInternalConn(&quicTlsConn{session, stream, nil}, connTypeQUICServer, isLocal, priority)
+		conn := &quicTlsConn{
+			Conn:        session,
+			Stream:      stream,
+			createdConn: nil,
+		}
+		t.conns <- newInternalConn(conn, connTypeQUICServer, isLocal, priority)
 	}
 }
 

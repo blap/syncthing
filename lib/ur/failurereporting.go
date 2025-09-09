@@ -9,6 +9,7 @@ package ur
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -209,12 +210,22 @@ func sendFailureReports(ctx context.Context, reports []FailureReport, url string
 		panic(err)
 	}
 
+	// Create HTTP client with better HTTP/2 compatibility
+	transport := &http.Transport{
+		DialContext:     dialer.DialContext,
+		Proxy:           http.ProxyFromEnvironment,
+		TLSClientConfig: tlsutil.SecureDefaultWithTLS12(),
+		// Add HTTP/2 specific configurations
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext:     dialer.DialContext,
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: tlsutil.SecureDefaultWithTLS12(),
-		},
+		Transport: transport,
+		Timeout:   sendTimeout,
 	}
 
 	reqCtx, reqCancel := context.WithTimeout(ctx, sendTimeout)
@@ -226,12 +237,57 @@ func sendFailureReports(ctx context.Context, reports []FailureReport, url string
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	// Add user agent for better identification
+	req.Header.Set("User-Agent", "Syncthing/"+build.LongVersion)
+
 	resp, err := client.Do(req)
 	if err != nil {
-		slog.WarnContext(ctx, "Failed to send failure report", slogutil.Error(err))
-		return
+		// Add detailed logging for HTTP/2 specific errors
+		if strings.Contains(err.Error(), "malformed HTTP response") ||
+			strings.Contains(err.Error(), "PROTOCOL_ERROR") ||
+			strings.Contains(err.Error(), "http2:") {
+			slog.WarnContext(ctx, "HTTP/2 protocol error detected in failure report",
+				"error", err.Error(),
+				"url", url,
+				"attemptingHTTP1Fallback", true)
+
+			// Try fallback to HTTP/1.1
+			transport.ForceAttemptHTTP2 = false
+			transport.TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
+
+			clientFallback := &http.Client{
+				Transport: transport,
+				Timeout:   sendTimeout,
+			}
+
+			resp, err = clientFallback.Do(req)
+			if err != nil {
+				slog.WarnContext(ctx, "Failed to send failure report even with HTTP/1.1 fallback", slogutil.Error(err))
+				return
+			}
+		} else {
+			slog.WarnContext(ctx, "Failed to send failure report", slogutil.Error(err))
+			return
+		}
 	}
-	resp.Body.Close()
+
+	if resp != nil {
+		defer resp.Body.Close()
+
+		// Log response status for debugging
+		slog.Debug("Failure report sent",
+			"status", resp.Status,
+			"statusCode", resp.StatusCode,
+			"url", url)
+
+		// Check for non-success status codes
+		if resp.StatusCode >= 400 {
+			slog.Warn("Failure report sent but server returned error status",
+				"statusCode", resp.StatusCode,
+				"status", resp.Status,
+				"url", url)
+		}
+	}
 }
 
 func newFailureReport(stat *failureStat) FailureReport {

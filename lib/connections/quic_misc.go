@@ -40,15 +40,15 @@ func quicNetwork(uri *url.URL) string {
 }
 
 type quicTlsConn struct {
-	quic.Connection
-	quic.Stream
+	*quic.Conn
+	*quic.Stream
 	// If we created this connection, we should be the ones closing it.
 	createdConn net.PacketConn
 }
 
 func (q *quicTlsConn) Close() error {
 	sterr := q.Stream.Close()
-	seerr := q.Connection.CloseWithError(0, "closing")
+	seerr := q.Conn.CloseWithError(0, "closing")
 	var pcerr error
 	if q.createdConn != nil {
 		pcerr = q.createdConn.Close()
@@ -63,7 +63,7 @@ func (q *quicTlsConn) Close() error {
 }
 
 func (q *quicTlsConn) ConnectionState() tls.ConnectionState {
-	return q.Connection.ConnectionState().TLS
+	return q.Conn.ConnectionState().TLS
 }
 
 func transportConnUnspecified(conn any) bool {

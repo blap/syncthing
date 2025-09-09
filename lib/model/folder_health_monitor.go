@@ -45,14 +45,6 @@ const (
 	// Health check interval for paused folders
 	pausedHealthCheckInterval = 30 * time.Minute
 
-	// Memory usage thresholds
-	highMemoryUsageThreshold     = 1024 * 1024 * 1024     // 1GB
-	veryHighMemoryUsageThreshold = 2 * 1024 * 1024 * 1024 // 2GB
-
-	// CPU usage thresholds for throttling
-	cpuUsageThreshold     = 80.0 // 80% CPU usage
-	highCPUUsageThreshold = 90.0 // 90% CPU usage
-	
 	// Memory optimization thresholds
 	memoryOptimizationThreshold = 1024 * 1024 * 1024 // 1GB
 )

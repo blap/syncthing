@@ -264,7 +264,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodGet, "/rest/folder/errors", s.getFolderErrors)             // folder [perpage] [page]
 	restMux.HandlerFunc(http.MethodGet, "/rest/folder/pullerrors", s.getFolderErrors)         // folder (deprecated)
 	restMux.HandlerFunc(http.MethodGet, "/rest/events", s.getIndexEvents)                     // [since] [limit] [timeout] [events]
-	restMux.HandlerFunc(http.MethodGet, "/rest/events/disk", s.getDiskEvents)                 // [since] [limit] [timeout]
+	restMux.HandlerFunc(http.MethodGet, "/rest/events/disk", s.getDiskEvents)                 // [ [since] [limit] [timeout]
 	restMux.HandlerFunc(http.MethodGet, "/rest/noauth/health", s.getHealth)                   // -
 	restMux.HandlerFunc(http.MethodGet, "/rest/stats/device", s.getDeviceStats)               // -
 	restMux.HandlerFunc(http.MethodGet, "/rest/stats/folder", s.getFolderStats)               // -
@@ -509,6 +509,26 @@ func (s *service) fatal(err *svcutil.FatalErr) {
 	}
 }
 
+func withDetailsMiddleware(id protocol.DeviceID, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Syncthing-Version", build.Version)
+		w.Header().Set("X-Syncthing-ID", id.String())
+		w.Header().Set(APIVersionHeader, APIVersion)
+		h.ServeHTTP(w, r)
+	})
+}
+
+func localhostMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if addressIsLocalhost(r.Host) {
+			h.ServeHTTP(w, r)
+			return
+		}
+
+		http.Error(w, "Host check error", http.StatusForbidden)
+	})
+}
+
 func debugMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
@@ -607,25 +627,6 @@ func noCacheMiddleware(h http.Handler) http.Handler {
 		w.Header().Set("Expires", time.Now().UTC().Format(http.TimeFormat))
 		w.Header().Set("Pragma", "no-cache")
 		h.ServeHTTP(w, r)
-	})
-}
-
-func withDetailsMiddleware(id protocol.DeviceID, h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Syncthing-Version", build.Version)
-		w.Header().Set("X-Syncthing-ID", id.String())
-		h.ServeHTTP(w, r)
-	})
-}
-
-func localhostMiddleware(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if addressIsLocalhost(r.Host) {
-			h.ServeHTTP(w, r)
-			return
-		}
-
-		http.Error(w, "Host check error", http.StatusForbidden)
 	})
 }
 

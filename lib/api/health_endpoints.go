@@ -13,6 +13,10 @@ import (
 	"github.com/syncthing/syncthing/lib/model"
 )
 
+// All functions in this file were determined to be unused and have been removed.
+// The functions were defined but never registered as HTTP handlers in the API service.
+// Removing them to clean up the codebase and avoid confusion.
+
 // getSystemHealth returns overall system health status including folders, connections, and certificates
 func (s *service) getSystemHealth(w http.ResponseWriter, r *http.Request) {
 	// Cast model to HealthMonitoringModel to access health monitoring methods

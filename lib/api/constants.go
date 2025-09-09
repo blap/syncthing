@@ -8,6 +8,7 @@ const (
 	SystemConnectionsEndpoint = "/rest/system/connections"
 	SystemShutdownEndpoint = "/rest/system/shutdown"
 	SystemRestartEndpoint  = "/rest/system/restart"
+	SystemVersionEndpoint  = "/rest/system/version"
 	
 	// Database endpoints
 	DBStatusEndpoint       = "/rest/db/status"
@@ -40,4 +41,8 @@ const (
 	ConnectionStateConnected    = "connected"
 	ConnectionStateDisconnected = "disconnected"
 	ConnectionStatePaused      = "paused"
+	
+	// API Versioning
+	APIVersion             = "1.0.0"
+	APIVersionHeader       = "X-API-Version"
 )

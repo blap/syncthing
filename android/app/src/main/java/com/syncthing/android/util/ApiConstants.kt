@@ -12,7 +12,6 @@ object ApiConstants {
     const val SYSTEM_SHUTDOWN_ENDPOINT = "/rest/system/shutdown"
     const val SYSTEM_RESTART_ENDPOINT = "/rest/system/restart"
     const val SYSTEM_VERSION_ENDPOINT = "/rest/system/version"
-    const val SYSTEM_UPGRADE_ENDPOINT = "/rest/system/upgrade"
     
     // Database endpoints
     const val DB_STATUS_ENDPOINT = "/rest/db/status"
@@ -40,9 +39,13 @@ object ApiConstants {
     const val API_KEY_HEADER = "X-API-Key"
     const val CONTENT_TYPE_HEADER = "Content-Type"
     const val JSON_CONTENT_TYPE = "application/json"
+    const val API_VERSION_HEADER = "X-API-Version"
     
     // Connection states
     const val CONNECTION_STATE_CONNECTED = "connected"
     const val CONNECTION_STATE_DISCONNECTED = "disconnected"
     const val CONNECTION_STATE_PAUSED = "paused"
+    
+    // API Versioning
+    const val API_VERSION = "1.0.0"
 }

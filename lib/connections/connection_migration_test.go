@@ -14,13 +14,13 @@ import (
 func TestConnectionStatePreservation(t *testing.T) {
 	// Given a connection migration manager
 	// TODO: Implement when migration manager is created
-	
+
 	// When we simulate a transfer state
 	// TODO: Implement when transfer state structures are created
-	
+
 	// And we migrate the connection
 	// TODO: Implement when migration functionality is created
-	
+
 	// Then the transfer state should be preserved
 	// TODO: Implement when migration functionality is created
 }
@@ -29,10 +29,10 @@ func TestConnectionStatePreservation(t *testing.T) {
 func TestSeamlessTransferMigration(t *testing.T) {
 	// Given a connection migration manager with active transfers
 	// TODO: Implement when migration manager is created
-	
+
 	// When we trigger a migration
 	// TODO: Implement when migration functionality is created
-	
+
 	// Then the transfers should continue without interruption
 	// TODO: Implement when migration functionality is created
 }
@@ -41,10 +41,10 @@ func TestSeamlessTransferMigration(t *testing.T) {
 func TestMigrationFailureHandling(t *testing.T) {
 	// Given a connection migration manager with active transfers
 	// TODO: Implement when migration manager is created
-	
+
 	// When a migration fails
 	// TODO: Implement when migration functionality is created
-	
+
 	// Then the system should fall back to the original connection
 	// TODO: Implement when migration functionality is created
 }
@@ -53,10 +53,10 @@ func TestMigrationFailureHandling(t *testing.T) {
 func TestMixedConnectionEnvironments(t *testing.T) {
 	// Given a connection migration manager with mixed connection types (LAN/WAN)
 	// TODO: Implement when migration manager is created
-	
+
 	// When we attempt migration
 	// TODO: Implement when migration functionality is created
-	
+
 	// Then migration should work correctly across different connection types
 	// TODO: Implement when migration functionality is created
 }

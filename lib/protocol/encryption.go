@@ -277,6 +277,11 @@ func (e encryptedConnection) Statistics() Statistics {
 	return e.conn.Statistics()
 }
 
+// GetPingLossRate returns the current ping packet loss rate as a percentage
+func (e encryptedConnection) GetPingLossRate() float64 {
+	return e.conn.GetPingLossRate()
+}
+
 func encryptFileInfos(keyGen *KeyGenerator, files []FileInfo, folderKey *[keySize]byte) {
 	for i, fi := range files {
 		files[i] = encryptFileInfo(keyGen, fi, folderKey)
@@ -703,3 +708,9 @@ func (r *folderKeyRegistry) setPasswords(keyGen *KeyGenerator, passwords map[str
 	r.keys = keysFromPasswords(keyGen, passwords)
 	r.mut.Unlock()
 }
+
+
+
+
+
+

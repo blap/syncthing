@@ -18,14 +18,14 @@ import (
 func TestDebugStableNetwork(t *testing.T) {
 	cfg := config.Wrap("/tmp/test-config.xml", config.New(protocol.EmptyDeviceID), protocol.EmptyDeviceID, nil)
 	hm := connections.NewHealthMonitor(cfg, "device1")
-	
+
 	// Test with good network conditions
 	hm.RecordLatency(20 * time.Millisecond)
 	t.Logf("After good latency (20ms): Health score = %f, Interval = %v", hm.GetHealthScore(), hm.GetInterval())
-	
+
 	hm.RecordPacketLoss(0.0)
 	t.Logf("After no packet loss: Health score = %f, Interval = %v", hm.GetHealthScore(), hm.GetInterval())
-	
+
 	// Test with multiple good measurements
 	for i := 0; i < 5; i++ {
 		hm.RecordLatency(20 * time.Millisecond)

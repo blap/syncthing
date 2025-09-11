@@ -345,7 +345,21 @@ func (s *Service) tryNATDevice(ctx context.Context, natd Device, intAddr Address
 	// same device trying to get the same internal port.
 	predictableRand := rand.New(rand.NewSource(int64(s.id.Short()) + int64(intAddr.Port) + hash(natd.ID())))
 
-	if extPort != 0 {
+	// Check if random ports are enabled in the configuration
+	randomPortsEnabled := s.cfg.Options().RandomPortsEnabled
+	
+	// Smart port strategy: First try the standard port (22000) for maximum compatibility
+	standardPort := 22000
+	if extPort == 0 {
+		// If no specific external port was requested, try the standard port first
+		name := fmt.Sprintf("syncthing-%d", standardPort)
+		port, err = natd.AddPortMapping(ctx, protocol, intAddr.Port, standardPort, name, leaseTime)
+		if err == nil {
+			extPort = port
+			goto findIP
+		}
+		l.Debugf("Error mapping standard port on %v (external port %d -> internal port %d): %v", natd.ID(), standardPort, intAddr.Port, err)
+	} else if !randomPortsEnabled {
 		// First try renewing our existing mapping, if we have one.
 		name := fmt.Sprintf("syncthing-%d", extPort)
 		port, err = natd.AddPortMapping(ctx, protocol, intAddr.Port, extPort, name, leaseTime)
@@ -356,23 +370,55 @@ func (s *Service) tryNATDevice(ctx context.Context, natd Device, intAddr Address
 		l.Debugf("Error extending lease on %v (external port %d -> internal port %d): %v", natd.ID(), extPort, intAddr.Port, err)
 	}
 
-	for i := 0; i < 10; i++ {
-		select {
-		case <-ctx.Done():
-			return []Address{}, ctx.Err()
-		default:
+	// If random ports are enabled, use the configured range
+	if randomPortsEnabled {
+		// Try to get a port from the configured range
+		startPort := s.cfg.Options().RandomPortRangeStart
+		endPort := s.cfg.Options().RandomPortRangeEnd
+		
+		// Validate the range
+		if startPort >= 1024 && endPort <= 65535 && startPort < endPort {
+			// Try up to 15 times to find a free port in the range (increased from 10 for better chances)
+			for i := 0; i < 15; i++ {
+				select {
+				case <-ctx.Done():
+					return []Address{}, ctx.Err()
+				default:
+				}
+				
+				extPort = startPort + predictableRand.Intn(endPort-startPort+1)
+				name := fmt.Sprintf("syncthing-%d", extPort)
+				port, err = natd.AddPortMapping(ctx, protocol, intAddr.Port, extPort, name, leaseTime)
+				if err == nil {
+					extPort = port
+					goto findIP
+				}
+				err = fmt.Errorf("getting new lease on %s (external port %d -> internal port %d): %w", natd.ID(), extPort, intAddr.Port, err)
+				l.Debugf("Error %s", err)
+			}
 		}
+	}
 
-		// Then try up to ten random ports.
-		extPort = 1024 + predictableRand.Intn(65535-1024)
-		name := fmt.Sprintf("syncthing-%d", extPort)
-		port, err = natd.AddPortMapping(ctx, protocol, intAddr.Port, extPort, name, leaseTime)
-		if err == nil {
-			extPort = port
-			goto findIP
+	// Fallback to the original behavior if random ports are not enabled or failed
+	if !randomPortsEnabled || extPort == 0 {
+		for i := 0; i < 15; i++ { // Increased from 10 to 15 for better chances
+			select {
+			case <-ctx.Done():
+				return []Address{}, ctx.Err()
+			default:
+			}
+
+			// Then try up to fifteen random ports.
+			extPort = 1024 + predictableRand.Intn(65535-1024)
+			name := fmt.Sprintf("syncthing-%d", extPort)
+			port, err = natd.AddPortMapping(ctx, protocol, intAddr.Port, extPort, name, leaseTime)
+			if err == nil {
+				extPort = port
+				goto findIP
+			}
+			err = fmt.Errorf("getting new lease on %s (external port %d -> internal port %d): %w", natd.ID(), extPort, intAddr.Port, err)
+			l.Debugf("Error %s", err)
 		}
-		err = fmt.Errorf("getting new lease on %s (external port %d -> internal port %d): %w", natd.ID(), extPort, intAddr.Port, err)
-		l.Debugf("Error %s", err)
 	}
 
 	return nil, err

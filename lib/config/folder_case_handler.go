@@ -29,28 +29,28 @@ func NewFolderCaseHandler(warningCallback func(folderID, message string)) *Folde
 func (fch *FolderCaseHandler) CheckFolderPathCase(folderID, folderPath string) {
 	// Normalize the path for comparison
 	normalizedPath := filepath.Clean(folderPath)
-	
+
 	// Check if the path exists with the exact case
 	if _, err := os.Stat(normalizedPath); err != nil {
 		// Path doesn't exist with exact case, check if it exists with different case
 		dir := filepath.Dir(normalizedPath)
 		base := filepath.Base(normalizedPath)
-		
+
 		// Check if parent directory exists
 		entries, readErr := os.ReadDir(dir)
 		if readErr != nil {
 			return
 		}
-		
+
 		// Look for entries with different case
 		for _, entry := range entries {
 			if strings.EqualFold(entry.Name(), base) && entry.Name() != base {
 				// Found a case mismatch
 				message := "Folder path has case mismatch. Filesystem has '" + entry.Name() + "' but config specifies '" + base + "'"
-				slog.Warn("Case sensitivity issue detected", 
-					"folder", folderID, 
+				slog.Warn("Case sensitivity issue detected",
+					"folder", folderID,
 					"message", message)
-				
+
 				if fch.warningCallback != nil {
 					fch.warningCallback(folderID, message)
 				}
@@ -64,13 +64,13 @@ func (fch *FolderCaseHandler) CheckFolderPathCase(folderID, folderPath string) {
 func (fch *FolderCaseHandler) NormalizeFolderPath(folderPath string) (string, error) {
 	// Normalize the path components to match actual case on disk
 	normalizedPath := filepath.Clean(folderPath)
-	
+
 	// Split the path into components
 	components := strings.Split(normalizedPath, string(filepath.Separator))
-	
+
 	// Start with the root
 	currentPath := ""
-	
+
 	for i, component := range components {
 		if component == "" {
 			// Handle root component
@@ -79,13 +79,13 @@ func (fch *FolderCaseHandler) NormalizeFolderPath(folderPath string) (string, er
 			}
 			continue
 		}
-		
+
 		// For the first component on Windows, it might be a drive letter
 		if i == 0 && len(component) >= 2 && component[1] == ':' {
 			currentPath = component
 			continue
 		}
-		
+
 		// Check if current path exists
 		if _, err := os.Stat(currentPath); err != nil {
 			// If the current path doesn't exist, we can't normalize further
@@ -96,14 +96,14 @@ func (fch *FolderCaseHandler) NormalizeFolderPath(folderPath string) (string, er
 			}
 			return filepath.Join(currentPath, remaining), nil
 		}
-		
+
 		// Read directory entries
 		entries, err := os.ReadDir(currentPath)
 		if err != nil {
 			// If we can't read the directory, return the path as-is
 			return folderPath, nil
 		}
-		
+
 		// Look for the component with case-insensitive matching
 		found := false
 		for _, entry := range entries {
@@ -118,7 +118,7 @@ func (fch *FolderCaseHandler) NormalizeFolderPath(folderPath string) (string, er
 				break
 			}
 		}
-		
+
 		// If not found, use the original component
 		if !found {
 			if currentPath == "" {
@@ -128,6 +128,6 @@ func (fch *FolderCaseHandler) NormalizeFolderPath(folderPath string) (string, er
 			}
 		}
 	}
-	
+
 	return currentPath, nil
 }

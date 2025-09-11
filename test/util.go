@@ -478,7 +478,7 @@ func startWalker(dir string, res chan<- fileInfo, abort <-chan struct{}) chan er
 func sha256file(fname string) (hash [sha256.Size]byte, err error) {
 	f, err := os.Open(fname)
 	if err != nil {
-		return
+		return hash, err
 	}
 	defer f.Close()
 
@@ -487,7 +487,7 @@ func sha256file(fname string) (hash [sha256.Size]byte, err error) {
 	hb := h.Sum(nil)
 	copy(hash[:], hb)
 
-	return
+	return hash, err
 }
 
 func isTimeout(err error) bool {

@@ -40,7 +40,7 @@ func (ps *PacketScheduler) AddConnection(deviceID protocol.DeviceID, conn protoc
 	defer ps.mut.Unlock()
 
 	ps.connections[deviceID] = append(ps.connections[deviceID], conn)
-	
+
 	// Initialize selection count for this connection if needed
 	if ps.selectionCount[deviceID] == nil {
 		ps.selectionCount[deviceID] = make(map[string]int)
@@ -64,12 +64,12 @@ func (ps *PacketScheduler) RemoveConnection(deviceID protocol.DeviceID, connID s
 			break
 		}
 	}
-	
+
 	// Remove from selection count tracking
 	if ps.selectionCount[deviceID] != nil {
 		delete(ps.selectionCount[deviceID], connID)
 	}
-	
+
 	// Clear last selection if it was this connection
 	if ps.lastSelection[deviceID] != nil && ps.lastSelection[deviceID].ConnectionID() == connID {
 		ps.lastSelection[deviceID] = nil
@@ -180,15 +180,17 @@ func (ps *PacketScheduler) getHealthScore(conn protocol.Connection) float64 {
 			return monitor.GetHealthScore()
 		}
 	}
-	
+
 	// If that doesn't work, try the interface version (for real connections)
-	if _, ok := conn.(interface{ HealthMonitor() protocol.HealthMonitorInterface }); ok {
+	if _, ok := conn.(interface {
+		HealthMonitor() protocol.HealthMonitorInterface
+	}); ok {
 		// We can't call GetHealthScore on the interface, so we'll return a default
 		// In a real implementation, we would need to extend the interface
 		// For now, we'll just return a default score
 		return 50.0
 	}
-	
+
 	// Default score if no health monitor available
 	return 50.0
 }
@@ -285,7 +287,7 @@ func (ps *PacketScheduler) DistributeDataChunks(deviceID protocol.DeviceID, chun
 	defer ps.mut.RUnlock()
 
 	result := make(map[string]int64)
-	
+
 	conns, ok := ps.connections[deviceID]
 	if !ok || len(conns) == 0 {
 		return result

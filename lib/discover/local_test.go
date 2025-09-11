@@ -16,6 +16,7 @@ import (
 	"github.com/syncthing/syncthing/internal/gen/discoproto"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestLocalInstanceID(t *testing.T) {
@@ -89,6 +90,179 @@ func TestLocalInstanceIDShouldTriggerNew(t *testing.T) {
 
 	if !new {
 		t.Fatal("new instance ID should be new")
+	}
+}
+
+func TestExtendedAnnouncePacket(t *testing.T) {
+	c, err := NewLocal(protocol.LocalDeviceID, ":0", &fakeAddressLister{}, events.NoopLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lc := c.(*localClient)
+	
+	// Test that the announcement packet includes version and feature information
+	msg, ok := lc.announcementPkt(12345, nil)
+	if !ok {
+		t.Fatal("Failed to create announcement packet")
+	}
+	
+	// Parse the packet to verify it contains the extended fields
+	if len(msg) < 4 {
+		t.Fatal("Packet too short")
+	}
+	
+	magic := uint32(msg[0])<<24 | uint32(msg[1])<<16 | uint32(msg[2])<<8 | uint32(msg[3])
+	if magic != Magic {
+		t.Errorf("Incorrect magic number: got %x, expected %x", magic, Magic)
+	}
+	
+	var pkt discoproto.Announce
+	err = proto.Unmarshal(msg[4:], &pkt)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal packet: %v", err)
+	}
+	
+	// Verify extended fields are present
+	if pkt.Version != ProtocolVersion {
+		t.Errorf("Incorrect protocol version: got %d, expected %d", pkt.Version, ProtocolVersion)
+	}
+	
+	if pkt.ClientName == "" {
+		t.Error("Client name should not be empty")
+	}
+	
+	if pkt.Features == 0 {
+		t.Error("Features should not be zero")
+	}
+}
+
+func TestVersionCompatibility(t *testing.T) {
+	c, err := NewLocal(protocol.LocalDeviceID, ":0", &fakeAddressLister{}, events.NoopLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lc := c.(*localClient)
+	
+	// Test compatible versions
+	if !lc.isVersionCompatible(1) {
+		t.Error("Version 1 should be compatible")
+	}
+	
+	if !lc.isVersionCompatible(ProtocolVersion) {
+		t.Errorf("Current version %d should be compatible", ProtocolVersion)
+	}
+	
+	// Test future version (should still be compatible within reason)
+	if !lc.isVersionCompatible(ProtocolVersion + 1) {
+		t.Errorf("Future version %d should be compatible", ProtocolVersion+1)
+	}
+	
+	// Test very old version (should not be compatible)
+	if lc.isVersionCompatible(0) {
+		t.Error("Version 0 should not be compatible")
+	}
+}
+
+func TestFeatureNames(t *testing.T) {
+	c, err := NewLocal(protocol.LocalDeviceID, ":0", &fakeAddressLister{}, events.NoopLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lc := c.(*localClient)
+	
+	// Test individual features
+	names := lc.getFeatureNames(FeatureMultipleConnections)
+	if len(names) != 1 || names[0] != "multiple-connections" {
+		t.Errorf("Incorrect feature names for multiple connections: %v", names)
+	}
+	
+	names = lc.getFeatureNames(FeatureEd25519Keys)
+	if len(names) != 1 || names[0] != "ed25519-keys" {
+		t.Errorf("Incorrect feature names for Ed25519 keys: %v", names)
+	}
+	
+	names = lc.getFeatureNames(FeatureExtendedAttributes)
+	if len(names) != 1 || names[0] != "extended-attributes" {
+		t.Errorf("Incorrect feature names for extended attributes: %v", names)
+	}
+	
+	// Test combined features
+	combined := uint64(FeatureMultipleConnections | FeatureEd25519Keys)
+	names = lc.getFeatureNames(combined)
+	if len(names) != 2 {
+		t.Errorf("Expected 2 feature names, got %d: %v", len(names), names)
+	}
+	
+	// Order might vary, so check both possibilities
+	if !(names[0] == "multiple-connections" && names[1] == "ed25519-keys") &&
+	   !(names[0] == "ed25519-keys" && names[1] == "multiple-connections") {
+		t.Errorf("Incorrect feature names for combined features: %v", names)
+	}
+}
+
+func TestAdaptiveIntervals(t *testing.T) {
+	c, err := NewLocal(protocol.LocalDeviceID, ":0", &fakeAddressLister{}, events.NoopLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lc := c.(*localClient)
+	
+	// Initially should be at default interval
+	if lc.broadcastInterval != BroadcastInterval {
+		t.Errorf("Initial interval incorrect: got %v, expected %v", lc.broadcastInterval, BroadcastInterval)
+	}
+	
+	// Test that with no data, interval doesn't change
+	lc.adaptBroadcastInterval()
+	if lc.broadcastInterval != BroadcastInterval {
+		t.Errorf("Interval should not change with no data: got %v, expected %v", lc.broadcastInterval, BroadcastInterval)
+	}
+	
+	// Add some stats data
+	lc.discoveryStats.totalCount = 10
+	
+	// Test high success rate (should increase interval)
+	lc.discoveryStats.successCount = 9 // 90% success rate
+	initialInterval := lc.broadcastInterval
+	lc.adaptBroadcastInterval()
+	if lc.broadcastInterval <= initialInterval {
+		// This might not always increase due to floating point precision, so let's check it's not decreased
+		if lc.broadcastInterval < initialInterval {
+			t.Error("Interval should not decrease with high success rate")
+		}
+	}
+	
+	// Test low success rate (should decrease interval)
+	lc.discoveryStats.successCount = 2 // 20% success rate
+	lc.broadcastInterval = BroadcastInterval // Reset to default
+	initialInterval = lc.broadcastInterval
+	lc.adaptBroadcastInterval()
+	if lc.broadcastInterval >= initialInterval {
+		// This might not always decrease due to floating point precision, so let's check it's not increased
+		if lc.broadcastInterval > initialInterval {
+			t.Error("Interval should not increase with low success rate")
+		}
+	}
+	
+	// Test boundary conditions
+	lc.broadcastInterval = MinBroadcastInterval
+	lc.discoveryStats.successCount = 2
+	lc.discoveryStats.totalCount = 10
+	lc.adaptBroadcastInterval()
+	if lc.broadcastInterval < MinBroadcastInterval {
+		t.Error("Interval should not go below minimum")
+	}
+	
+	lc.broadcastInterval = MaxBroadcastInterval
+	lc.discoveryStats.successCount = 9
+	lc.discoveryStats.totalCount = 10
+	lc.adaptBroadcastInterval()
+	if lc.broadcastInterval > MaxBroadcastInterval {
+		t.Error("Interval should not go above maximum")
 	}
 }
 

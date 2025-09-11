@@ -38,7 +38,7 @@ func repeatedDeviceID(v byte) (d DeviceID) {
 	for i := range d {
 		d[i] = v
 	}
-	return
+	return d
 }
 
 // NewDeviceID generates a new device ID from SHA256 hash of the given piece

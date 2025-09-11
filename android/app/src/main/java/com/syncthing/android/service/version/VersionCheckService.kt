@@ -11,13 +11,13 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.syncthing.android.MainActivity
 import com.syncthing.android.R
+import com.syncthing.android.data.api.SyncthingApiServiceInterface
 import com.syncthing.android.data.api.model.SystemVersion
 import com.syncthing.android.util.VersionCompatibilityChecker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 import com.syncthing.android.util.ApiConstants
 
 class VersionCheckService(
@@ -59,51 +59,36 @@ class VersionCheckService(
     }
 
     /**
-     * Fetch the desktop Syncthing version through the REST API
+     * Fetch the desktop Syncthing version through the REST API using Retrofit
      */
-    private fun fetchDesktopVersion(): SystemVersion {
-        val url = URL("$DESKTOP_API_URL${ApiConstants.SYSTEM_VERSION_ENDPOINT}")
-        val connection = url.openConnection() as HttpURLConnection
-        connection.requestMethod = "GET"
-        connection.connectTimeout = 5000 // 5 seconds
-        connection.readTimeout = 5000 // 5 seconds
+    private suspend fun fetchDesktopVersion(): SystemVersion {
+        // Create Retrofit instance
+        val retrofit = Retrofit.Builder()
+            .baseUrl(DESKTOP_API_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
         
-        try {
-            val responseCode = connection.responseCode
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                // In a real implementation, you would parse the JSON response
-                // This is a simplified example
-                return SystemVersion(
-                    version = "1.2.3", // This would come from the API response
-                    codename = "Fermium",
-                    longVersion = "1.2.3-rc.1",
-                    extra = "",
-                    os = "linux",
-                    arch = "amd64",
-                    isBeta = false,
-                    isCandidate = true,
-                    isRelease = false,
-                    date = "2025-09-08",
-                    tags = listOf("rc"),
-                    stamp = "1234567890",
-                    user = "user",
-                    container = "docker"
-                )
-            } else {
-                throw IOException("Failed to fetch version: HTTP $responseCode")
-            }
-        } finally {
-            connection.disconnect()
-        }
+        // Create API service
+        val apiService = retrofit.create(SyncthingApiServiceInterface::class.java)
+        
+        // Make the API call (in a real implementation, you would need to handle API keys)
+        // For now, we'll use a placeholder API key
+        return apiService.getSystemVersion("YOUR_API_KEY_HERE")
     }
 
     /**
-     * Get the current Android app version
-     * This would typically be retrieved from the package manager
+     * Get the current Android app version from package manager
      */
     private fun getAndroidAppVersion(): String {
-        // In a real implementation, you would get this from the package manager
-        return "1.2.0" // Placeholder
+        return try {
+            val packageInfo = applicationContext.packageManager.getPackageInfo(
+                applicationContext.packageName, 
+                0
+            )
+            packageInfo.versionName ?: "1.0.0" // Default fallback
+        } catch (e: Exception) {
+            "1.0.0" // Default fallback
+        }
     }
 
     /**
@@ -123,7 +108,9 @@ class VersionCheckService(
         }
         
         // Create intent to open the app when notification is tapped
-        val intent = Intent(applicationContext, MainActivity::class.java)
+        val intent = Intent(applicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
         val pendingIntent = PendingIntent.getActivity(
             applicationContext,
             0,
@@ -136,6 +123,10 @@ class VersionCheckService(
             .setSmallIcon(R.drawable.ic_notification) // You would need to add this drawable
             .setContentTitle("Syncthing Update Available")
             .setContentText(compatibilityResult.updateMessage ?: "Update available")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("Desktop version: ${compatibilityResult.desktopVersion}\nAndroid version: ${compatibilityResult.androidVersion}\n\n${compatibilityResult.updateMessage ?: "Update available"}")
+            )
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

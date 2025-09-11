@@ -57,13 +57,13 @@ type overflowTracker struct {
 // newOverflowTracker creates a new overflow tracker with default configuration
 func newOverflowTracker() *overflowTracker {
 	return &overflowTracker{
-		count:          0,
-		lastOverflow:   time.Time{},
-		frequency:      0,
-		adaptiveBuffer: 1000,
-		minBufferSize:  500,
-		maxBufferSize:  10000,
-		resizeFactor:   1.5,
+		count:           0,
+		lastOverflow:    time.Time{},
+		frequency:       0,
+		adaptiveBuffer:  1000,
+		minBufferSize:   500,
+		maxBufferSize:   10000,
+		resizeFactor:    1.5,
 		overflowHistory: make([]time.Time, 0, 100), // Keep last 100 overflow timestamps
 	}
 }
@@ -92,7 +92,7 @@ func (ot *overflowTracker) recordOverflow() {
 
 	// Add to overflow history
 	ot.overflowHistory = append(ot.overflowHistory, now)
-	
+
 	// Keep only the last 100 timestamps
 	if len(ot.overflowHistory) > 100 {
 		ot.overflowHistory = ot.overflowHistory[1:]
@@ -104,10 +104,10 @@ func (ot *overflowTracker) recordOverflow() {
 	}
 
 	ot.lastOverflow = now
-	
+
 	// Calculate average overflow interval
 	ot.calculateAvgOverflowInterval()
-	
+
 	// Calculate overflow rate (overflows per minute)
 	ot.calculateOverflowRate()
 }
@@ -129,10 +129,10 @@ func (ot *overflowTracker) shouldDecreaseBuffer(lastEvent time.Time) bool {
 	// If we haven't had an overflow for more than 5 minutes and buffer is more than 2x the minimum
 	inactivityDuration := time.Since(ot.lastOverflow)
 	eventInactivity := time.Since(lastEvent)
-	
-	return inactivityDuration > 5*time.Minute && 
-		   eventInactivity > 10*time.Minute && 
-		   ot.adaptiveBuffer > ot.minBufferSize*2
+
+	return inactivityDuration > 5*time.Minute &&
+		eventInactivity > 10*time.Minute &&
+		ot.adaptiveBuffer > ot.minBufferSize*2
 }
 
 // getSystemPressure calculates a normalized system pressure value (0.0 to 1.0)
@@ -147,7 +147,7 @@ func (ot *overflowTracker) getSystemPressure() float64 {
 
 	// Weighted average
 	pressure := (ratePressure*0.4 + bufferPressure*0.3 + overflowPressure*0.3)
-	
+
 	// Clamp to 0-1 range
 	if pressure > 1.0 {
 		pressure = 1.0
@@ -155,7 +155,7 @@ func (ot *overflowTracker) getSystemPressure() float64 {
 	if pressure < 0.0 {
 		pressure = 0.0
 	}
-	
+
 	return pressure
 }
 
@@ -166,10 +166,10 @@ func (ot *overflowTracker) increaseBuffer() int {
 
 	// Get adaptive resize factor based on system pressure
 	factor := ot.getAdaptiveResizeFactor()
-	
+
 	// Increase buffer by the adaptive factor
 	ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer) * factor)
-	
+
 	// Cap at maximum buffer size
 	if ot.adaptiveBuffer > ot.maxBufferSize {
 		ot.adaptiveBuffer = ot.maxBufferSize
@@ -185,7 +185,7 @@ func (ot *overflowTracker) decreaseBuffer() int {
 
 	// Decrease buffer by resize factor
 	ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer) / ot.resizeFactor)
-	
+
 	// Ensure it doesn't go below minimum buffer size
 	if ot.adaptiveBuffer < ot.minBufferSize {
 		ot.adaptiveBuffer = ot.minBufferSize
@@ -202,12 +202,12 @@ func (ot *overflowTracker) getOptimalBufferSize(fileCount int) int {
 	// Calculate buffer size based on file count with logarithmic scaling
 	// This prevents extremely large buffers for huge folders
 	optimalSize := int(float64(ot.minBufferSize) * (1 + (float64(fileCount) / 1000.0)))
-	
+
 	// Apply logarithmic scaling for very large folders
 	if fileCount > 10000 {
 		optimalSize = int(float64(ot.minBufferSize) * (1 + (10 * (1 + (float64(fileCount) / 100000.0)))))
 	}
-	
+
 	// Clamp between min and max buffer sizes
 	if optimalSize < ot.minBufferSize {
 		optimalSize = ot.minBufferSize
@@ -226,10 +226,10 @@ func (ot *overflowTracker) updateBufferSizeBasedOnResources(fileCount int) int {
 
 	// Get the optimal buffer size for this folder
 	optimalSize := ot.getOptimalBufferSize(fileCount)
-	
+
 	// Get current system pressure
 	pressure := ot.getSystemPressure()
-	
+
 	// Adjust buffer size based on pressure
 	if pressure > 0.7 {
 		// High pressure - increase buffer toward optimal size
@@ -241,7 +241,7 @@ func (ot *overflowTracker) updateBufferSizeBasedOnResources(fileCount int) int {
 		// Moderate pressure - slowly adjust toward optimal
 		ot.adaptiveBuffer = int(float64(ot.adaptiveBuffer)*0.95 + float64(optimalSize)*0.05)
 	}
-	
+
 	// Clamp between min and max buffer sizes
 	if ot.adaptiveBuffer < ot.minBufferSize {
 		ot.adaptiveBuffer = ot.minBufferSize
@@ -259,7 +259,7 @@ func (ot *overflowTracker) getAdaptiveResizeFactor() float64 {
 	defer ot.mu.Unlock()
 
 	pressure := ot.getSystemPressure()
-	
+
 	// Return different factors based on pressure
 	if pressure > 0.8 {
 		return 2.0 // High pressure - aggressive resize

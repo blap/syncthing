@@ -25,6 +25,7 @@ class VersionCheckWorker {
                 .setRequiredNetworkType(NetworkType.UNMETERED)
                 .setRequiresCharging(false) // Set to true if you want to only check when charging
                 .setRequiresBatteryNotLow(true)
+                .setRequiresDeviceIdle(false) // Set to true if you want to only check when device is idle
                 .build()
             
             // Create periodic work request - run every 24 hours
@@ -45,10 +46,52 @@ class VersionCheckWorker {
         }
         
         /**
+         * Schedule flexible version checking for better battery optimization
+         * This version allows the system to optimize timing based on device conditions
+         */
+        fun scheduleFlexibleVersionCheck(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(true)
+                .build()
+            
+            // Flexible work request - run approximately every 24 hours
+            val versionCheckRequest = PeriodicWorkRequestBuilder<VersionCheckService>(
+                24, TimeUnit.HOURS
+            )
+                .setConstraints(constraints)
+                .addTag(WORK_TAG)
+                .build()
+            
+            WorkManager.getInstance(context)
+                .enqueueUniquePeriodicWork(
+                    WORK_NAME,
+                    ExistingPeriodicWorkPolicy.KEEP,
+                    versionCheckRequest
+                )
+        }
+        
+        /**
          * Run version check immediately
          */
         fun runImmediateVersionCheck(context: Context) {
             val versionCheckRequest = OneTimeWorkRequestBuilder<VersionCheckService>()
+                .build()
+                
+            WorkManager.getInstance(context)
+                .enqueue(versionCheckRequest)
+        }
+        
+        /**
+         * Run version check with specific constraints (e.g., when connected to WiFi)
+         */
+        fun runVersionCheckOnWifi(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.UNMETERED)
+                .build()
+                
+            val versionCheckRequest = OneTimeWorkRequestBuilder<VersionCheckService>()
+                .setConstraints(constraints)
                 .build()
                 
             WorkManager.getInstance(context)

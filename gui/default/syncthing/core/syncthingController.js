@@ -1445,6 +1445,49 @@ angular.module('syncthing.core')
             }
         }
 
+        // Function to provide connection stability recommendations based on connection type and metrics
+        $scope.getConnectionStabilityRecommendations = function (deviceID) {
+            var conn = $scope.connections[deviceID];
+            if (!conn || !conn.connected) {
+                return [];
+            }
+            
+            var recommendations = [];
+            var connType = $scope.rdConnType(deviceID);
+            
+            // Check for connection stability issues based on metrics
+            if (conn.inbps !== undefined && conn.outbps !== undefined) {
+                // If both upload and download rates are very low, suggest checking network
+                if (conn.inbps < 1024 && conn.outbps < 1024) { // Less than 1 KB/s
+                    recommendations.push($translate.instant('Connection speed is very slow. Check your network connection.'));
+                }
+            }
+            
+            // Provide protocol-specific recommendations
+            switch (connType) {
+                case "relaywan":
+                case "relaylan":
+                    recommendations.push($translate.instant('Consider configuring direct connections to improve performance.'));
+                    break;
+                case "tcpwan":
+                    recommendations.push($translate.instant('WAN connections may be affected by firewalls or NAT. Ensure port 22000 is accessible.'));
+                    break;
+                case "quicwan":
+                    recommendations.push($translate.instant('QUIC connections over WAN may have issues with some network configurations.'));
+                    break;
+                default:
+                    // No specific recommendations for LAN connections
+                    break;
+            }
+            
+            // Check for frequent connection cycling (based on our enhanced error messages)
+            if (conn.lastError && conn.lastError.indexOf("replacing connection") !== -1) {
+                recommendations.push($translate.instant('Frequent connection replacements detected. Check device compatibility and network stability.'));
+            }
+            
+            return recommendations;
+        }
+
         $scope.hasRemoteGUIAddress = function (deviceCfg) {
             if (!deviceCfg.remoteGUIPort)
                 return false;

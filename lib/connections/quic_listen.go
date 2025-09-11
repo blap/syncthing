@@ -95,6 +95,18 @@ func (t *quicListener) serve(ctx context.Context) error {
 		return err
 	}
 
+	// Use smart port management: prefer standard ports and only use random ports when necessary
+	if t.cfg.Options().RandomPortsEnabled {
+		smartPort, err := getSmartPort(t.cfg, "quic")
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to get smart port for QUIC listener", slogutil.Error(err))
+			// Fall back to default behavior
+		} else if smartPort > 0 {
+			// Update the address with the smart port
+			udpAddr.Port = smartPort
+		}
+	}
+
 	udpConn, err := net.ListenUDP(network, udpAddr)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to listen (QUIC)", slogutil.Error(err))

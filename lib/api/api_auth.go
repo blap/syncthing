@@ -66,7 +66,7 @@ func remoteAddress(r *http.Request) (remoteAddr, proxy string) {
 	}
 
 	if !localProxy {
-		return
+		return remoteAddr, proxy
 	}
 
 	forwardedAddr, _, _ := strings.Cut(r.Header.Get("X-Forwarded-For"), ",")
@@ -77,7 +77,7 @@ func remoteAddress(r *http.Request) (remoteAddr, proxy string) {
 		proxy = remoteAddr
 		remoteAddr = forwardedIP.String()
 	}
-	return
+	return remoteAddr, proxy
 }
 
 func antiBruteForceSleep() {

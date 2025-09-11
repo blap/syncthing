@@ -16,6 +16,11 @@
         android:title="Devices" />
     
     <item
+        android:id="@+id/navigation_configuration"
+        android:icon="@drawable/ic_settings"
+        android:title="Configuration" />
+    
+    <item
         android:id="@+id/navigation_settings"
         android:icon="@drawable/ic_settings"
         android:title="Settings" />

@@ -400,6 +400,8 @@ func parseFlags() {
 func test(tags []string, pkgs ...string) {
 	lazyRebuildAssets()
 
+	setBuildEnvVars() // Add this line
+
 	args := []string{"test", "-tags", strings.Join(tags, " ")}
 	if long {
 		timeout = longTimeout
@@ -711,97 +713,97 @@ func createPostInstScript(target target) (string, error) {
 }
 
 func shouldBuildSyso(dir string) (string, error) {
-    // Skip resource generation if not on Windows
-    if goos != "windows" {
-        return "", nil
-    }
+	// Skip resource generation if not on Windows
+	if goos != "windows" {
+		return "", nil
+	}
 
-    // Check if goversioninfo is available
-    if _, err := exec.LookPath("goversioninfo"); err != nil {
-        // Try to install it
-        log.Println("goversioninfo not found, attempting to install...")
-        cmd := exec.Command(goCmd, "install", "github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest")
-        if installErr := cmd.Run(); installErr != nil {
-            return "", errors.New("goversioninfo not found and failed to install: " + installErr.Error() + ". Windows binaries will not have file information encoded")
-        }
-        log.Println("goversioninfo installed successfully")
-    }
+	// Check if goversioninfo is available
+	if _, err := exec.LookPath("goversioninfo"); err != nil {
+		// Try to install it
+		log.Println("goversioninfo not found, attempting to install...")
+		cmd := exec.Command(goCmd, "install", "github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest")
+		if installErr := cmd.Run(); installErr != nil {
+			return "", errors.New("goversioninfo not found and failed to install: " + installErr.Error() + ". Windows binaries will not have file information encoded")
+		}
+		log.Println("goversioninfo installed successfully")
+	}
 
-    // Use absolute path for the icon to ensure it's found
-    iconPath := filepath.Join(dir, "assets", "logo.ico")
-    if _, err := os.Stat(iconPath); os.IsNotExist(err) {
-        return "", errors.New("icon file not found at " + iconPath)
-    }
+	// Use absolute path for the icon to ensure it's found
+	iconPath := filepath.Join(dir, "assets", "logo.ico")
+	if _, err := os.Stat(iconPath); os.IsNotExist(err) {
+		return "", errors.New("icon file not found at " + iconPath)
+	}
 
-    type M map[string]interface{}
-    version := getVersion()
-    version = strings.TrimPrefix(version, "v")
-    major, minor, patch := semanticVersion()
-    bs, err := json.Marshal(M{
-        "FixedFileInfo": M{
-            "FileVersion": M{
-                "Major": major,
-                "Minor": minor,
-                "Patch": patch,
-            },
-            "ProductVersion": M{
-                "Major": major,
-                "Minor": minor,
-                "Patch": patch,
-            },
-        },
-        "StringFileInfo": M{
-            "CompanyName":      "The Syncthing Authors",
-            "FileDescription":  "Syncthing - Open Source Continuous File Synchronization",
-            "FileVersion":      version,
-            "InternalName":     "syncthing",
-            "LegalCopyright":   "The Syncthing Authors",
-            "OriginalFilename": "syncthing",
-            "ProductName":      "Syncthing",
-            "ProductVersion":   version,
-        },
-        "IconPath": iconPath, // Use absolute path
-    })
-    if err != nil {
-        return "", err
-    }
+	type M map[string]interface{}
+	version := getVersion()
+	version = strings.TrimPrefix(version, "v")
+	major, minor, patch := semanticVersion()
+	bs, err := json.Marshal(M{
+		"FixedFileInfo": M{
+			"FileVersion": M{
+				"Major": major,
+				"Minor": minor,
+				"Patch": patch,
+			},
+			"ProductVersion": M{
+				"Major": major,
+				"Minor": minor,
+				"Patch": patch,
+			},
+		},
+		"StringFileInfo": M{
+			"CompanyName":      "The Syncthing Authors",
+			"FileDescription":  "Syncthing - Open Source Continuous File Synchronization",
+			"FileVersion":      version,
+			"InternalName":     "syncthing",
+			"LegalCopyright":   "The Syncthing Authors",
+			"OriginalFilename": "syncthing",
+			"ProductName":      "Syncthing",
+			"ProductVersion":   version,
+		},
+		"IconPath": iconPath, // Use absolute path
+	})
+	if err != nil {
+		return "", err
+	}
 
-    jsonPath := filepath.Join(dir, "versioninfo.json")
-    err = os.WriteFile(jsonPath, bs, 0o644)
-    if err != nil {
-        return "", errors.New("failed to create " + jsonPath + ": " + err.Error())
-    }
+	jsonPath := filepath.Join(dir, "versioninfo.json")
+	err = os.WriteFile(jsonPath, bs, 0o644)
+	if err != nil {
+		return "", errors.New("failed to create " + jsonPath + ": " + err.Error())
+	}
 
-    defer func() {
-        if err := os.Remove(jsonPath); err != nil {
-            log.Printf("Warning: unable to remove generated %s: %v. Please remove it manually.", jsonPath, err)
-        }
-    }()
+	defer func() {
+		if err := os.Remove(jsonPath); err != nil {
+			log.Printf("Warning: unable to remove generated %s: %v. Please remove it manually.", jsonPath, err)
+		}
+	}()
 
-    sysoPath := filepath.Join(dir, "cmd", "syncthing", "resource.syso")
+	sysoPath := filepath.Join(dir, "cmd", "syncthing", "resource.syso")
 
-    // See https://github.com/josephspurrier/goversioninfo#command-line-flags
-    arm := strings.HasPrefix(goarch, "arm")
-    a64 := strings.Contains(goarch, "64")
+	// See https://github.com/josephspurrier/goversioninfo#command-line-flags
+	arm := strings.HasPrefix(goarch, "arm")
+	a64 := strings.Contains(goarch, "64")
 
-    cmd := exec.Command("goversioninfo", "-o", sysoPath, fmt.Sprintf("-arm=%v", arm), fmt.Sprintf("-64=%v", a64))
-    cmd.Stderr = os.Stderr // Show any errors from goversioninfo
-    if err := cmd.Run(); err != nil {
-        return "", errors.New("failed to create " + sysoPath + ": " + err.Error())
-    }
+	cmd := exec.Command("goversioninfo", "-o", sysoPath, fmt.Sprintf("-arm=%v", arm), fmt.Sprintf("-64=%v", a64))
+	cmd.Stderr = os.Stderr // Show any errors from goversioninfo
+	if err := cmd.Run(); err != nil {
+		return "", errors.New("failed to create " + sysoPath + ": " + err.Error())
+	}
 
-    // Add debug output to verify the resource.syso file was created
-    if _, err := os.Stat(sysoPath); err == nil {
-        log.Printf("Successfully created resource.syso at %s", sysoPath)
-        // Get file info for additional verification
-        if fileInfo, err := os.Stat(sysoPath); err == nil {
-            log.Printf("resource.syso file size: %d bytes", fileInfo.Size())
-        }
-    } else {
-        log.Printf("Warning: resource.syso was not created at %s", sysoPath)
-    }
+	// Add debug output to verify the resource.syso file was created
+	if _, err := os.Stat(sysoPath); err == nil {
+		log.Printf("Successfully created resource.syso at %s", sysoPath)
+		// Get file info for additional verification
+		if fileInfo, err := os.Stat(sysoPath); err == nil {
+			log.Printf("resource.syso file size: %d bytes", fileInfo.Size())
+		}
+	} else {
+		log.Printf("Warning: resource.syso was not created at %s", sysoPath)
+	}
 
-    return sysoPath, nil
+	return sysoPath, nil
 }
 
 func shouldCleanupSyso(sysoFilePath string) {

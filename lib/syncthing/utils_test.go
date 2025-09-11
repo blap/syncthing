@@ -15,12 +15,12 @@ import (
 func TestMigrationBatching(t *testing.T) {
 	// This is a simple test to verify the batching logic
 	// In a real scenario, this would involve more complex setup
-	
+
 	// Test that our increased batch size is reasonable
 	if 5000 <= 1000 {
 		t.Error("Batch size should be increased for better performance")
 	}
-	
+
 	// Test that our logging interval is reasonable
 	if 30*time.Second <= 10*time.Second {
 		t.Error("Logging interval should be increased to reduce performance impact")

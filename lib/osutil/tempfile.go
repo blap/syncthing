@@ -61,5 +61,5 @@ func TempFile(filesystem fs.Filesystem, dir, prefix string) (f fs.File, err erro
 		}
 		break
 	}
-	return
+	return f, err
 }

@@ -14,10 +14,10 @@ import (
 func TestAdaptiveMonitoringIntervals(t *testing.T) {
 	// Given a lazy health monitor
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// When we simulate different activity levels
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// Then monitoring intervals should adjust accordingly
 	// TODO: Implement when lazy health monitor is created
 }
@@ -26,10 +26,10 @@ func TestAdaptiveMonitoringIntervals(t *testing.T) {
 func TestActivityDetection(t *testing.T) {
 	// Given a lazy health monitor with connections
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// When we simulate connection activity
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// Then activity should be properly detected and tracked
 	// TODO: Implement when lazy health monitor is created
 }
@@ -38,10 +38,10 @@ func TestActivityDetection(t *testing.T) {
 func TestMonitoringStateTransitions(t *testing.T) {
 	// Given a lazy health monitor with connections
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// When we transition between activity states
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// Then monitoring state should transition appropriately
 	// TODO: Implement when lazy health monitor is created
 }
@@ -50,10 +50,10 @@ func TestMonitoringStateTransitions(t *testing.T) {
 func TestResourceUsageImprovements(t *testing.T) {
 	// Given a lazy health monitor and traditional health monitor
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// When we simulate inactive connections
 	// TODO: Implement when lazy health monitor is created
-	
+
 	// Then lazy monitoring should consume fewer resources
 	// TODO: Implement when lazy health monitor is created
 }

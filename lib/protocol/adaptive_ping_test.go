@@ -17,7 +17,7 @@ func TestAdaptivePingSender(t *testing.T) {
 	// This test will be implemented after we add the adaptive ping sender functionality
 	// For now, we're just setting up the test structure following TDD principles
 	t.Skip("Adaptive ping sender not yet implemented")
-	
+
 	ar, aw := io.Pipe()
 	br, bw := io.Pipe()
 
@@ -38,7 +38,7 @@ func TestFixedIntervalPingSender(t *testing.T) {
 	// Test that the fixed interval ping sender still works as expected
 	// when adaptive keep-alive is disabled
 	t.Skip("Fixed interval ping sender test not yet implemented")
-	
+
 	ar, aw := io.Pipe()
 	br, bw := io.Pipe()
 

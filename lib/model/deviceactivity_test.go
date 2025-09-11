@@ -16,7 +16,7 @@ import (
 // TestAvailability represents a device availability entry for testing
 // Using a different name to avoid conflict with the real Availability struct
 type TestAvailability struct {
-	ID        protocol.DeviceID
+	ID protocol.DeviceID
 }
 
 // convertTestAvailability converts a slice of TestAvailability to Availability

@@ -56,7 +56,7 @@ func (s *serviceMap[K, S]) Add(k K, v S) {
 // there is no service at that key.
 func (s *serviceMap[K, S]) Get(k K) (v S, ok bool) {
 	v, ok = s.services[k]
-	return
+	return v, ok
 }
 
 // Stop removes the service at the given key from the supervisor, stopping it.
@@ -98,7 +98,7 @@ func (s *serviceMap[K, S]) Remove(k K) (found bool) {
 	}
 	delete(s.services, k)
 	delete(s.tokens, k)
-	return
+	return found
 }
 
 // RemoveAndWait removes the service at the given key, stopping it on the

@@ -30,27 +30,27 @@ type MetricsService struct {
 
 // DeviceMetrics contains metrics for a specific device
 type DeviceMetrics struct {
-	DeviceID              protocol.DeviceID
-	ConnectionAttempts    int64
-	SuccessfulConnections int64
-	FailedConnections     int64
-	TLSHandshakeFailures  int64
-	CertificateErrors     int64
-	LastConnectionAttempt time.Time
+	DeviceID                 protocol.DeviceID
+	ConnectionAttempts       int64
+	SuccessfulConnections    int64
+	FailedConnections        int64
+	TLSHandshakeFailures     int64
+	CertificateErrors        int64
+	LastConnectionAttempt    time.Time
 	LastSuccessfulConnection time.Time
-	LastFailedConnection  time.Time
-	ConnectionDurations   []time.Duration
-	LastError             string
-	LastErrorTime         time.Time
+	LastFailedConnection     time.Time
+	ConnectionDurations      []time.Duration
+	LastError                string
+	LastErrorTime            time.Time
 }
 
 // ConnectionEvent represents a connection event for metrics collection
 type ConnectionEvent struct {
-	DeviceID     protocol.DeviceID
-	EventType    ConnectionEventType
-	Error        error
-	Duration     time.Duration
-	CertInfo     *CertificateInfo
+	DeviceID  protocol.DeviceID
+	EventType ConnectionEventType
+	Error     error
+	Duration  time.Duration
+	CertInfo  *CertificateInfo
 }
 
 // ConnectionEventType represents the type of connection event
@@ -59,16 +59,16 @@ type ConnectionEventType int
 const (
 	// ConnectionAttempt indicates a connection attempt was made
 	ConnectionAttempt ConnectionEventType = iota
-	
+
 	// ConnectionSuccess indicates a connection was successful
 	ConnectionSuccess
-	
+
 	// ConnectionFailure indicates a connection failed
 	ConnectionFailure
-	
+
 	// TLSHandshakeFailure indicates a TLS handshake failed
 	TLSHandshakeFailure
-	
+
 	// CertificateError indicates a certificate-related error
 	CertificateError
 )
@@ -94,10 +94,10 @@ func NewMetricsService() *MetricsService {
 // Serve implements suture.Service
 func (ms *MetricsService) Serve(ctx context.Context) error {
 	slog.Info("Starting connection quality metrics service")
-	
+
 	// This service mainly provides methods for other components to report metrics
 	// It doesn't have its own background tasks
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -114,24 +114,24 @@ func (ms *MetricsService) Serve(ctx context.Context) error {
 func (ms *MetricsService) RecordConnectionEvent(event *ConnectionEvent) {
 	ms.mutex.Lock()
 	defer ms.mutex.Unlock()
-	
+
 	// Get or create metrics for this device
 	deviceMetrics, exists := ms.metrics[event.DeviceID]
 	if !exists {
 		deviceMetrics = &DeviceMetrics{
-			DeviceID:           event.DeviceID,
+			DeviceID:            event.DeviceID,
 			ConnectionDurations: make([]time.Duration, 0, 100), // Keep last 100 durations
 		}
 		ms.metrics[event.DeviceID] = deviceMetrics
 	}
-	
+
 	// Update metrics based on event type
 	deviceMetrics.LastConnectionAttempt = time.Now()
-	
+
 	switch event.EventType {
 	case ConnectionAttempt:
 		deviceMetrics.ConnectionAttempts++
-		
+
 	case ConnectionSuccess:
 		deviceMetrics.SuccessfulConnections++
 		deviceMetrics.LastSuccessfulConnection = time.Now()
@@ -141,7 +141,7 @@ func (ms *MetricsService) RecordConnectionEvent(event *ConnectionEvent) {
 			deviceMetrics.ConnectionDurations = deviceMetrics.ConnectionDurations[1:]
 		}
 		deviceMetrics.ConnectionDurations = append(deviceMetrics.ConnectionDurations, event.Duration)
-		
+
 	case ConnectionFailure:
 		deviceMetrics.FailedConnections++
 		deviceMetrics.LastFailedConnection = time.Now()
@@ -149,7 +149,7 @@ func (ms *MetricsService) RecordConnectionEvent(event *ConnectionEvent) {
 			deviceMetrics.LastError = event.Error.Error()
 			deviceMetrics.LastErrorTime = time.Now()
 		}
-		
+
 	case TLSHandshakeFailure:
 		deviceMetrics.TLSHandshakeFailures++
 		deviceMetrics.FailedConnections++
@@ -158,7 +158,7 @@ func (ms *MetricsService) RecordConnectionEvent(event *ConnectionEvent) {
 			deviceMetrics.LastError = event.Error.Error()
 			deviceMetrics.LastErrorTime = time.Now()
 		}
-		
+
 	case CertificateError:
 		deviceMetrics.CertificateErrors++
 		deviceMetrics.FailedConnections++
@@ -168,8 +168,8 @@ func (ms *MetricsService) RecordConnectionEvent(event *ConnectionEvent) {
 			deviceMetrics.LastErrorTime = time.Now()
 		}
 	}
-	
-	slog.Debug("Recorded connection event", 
+
+	slog.Debug("Recorded connection event",
 		"device", event.DeviceID.String(),
 		"type", event.EventType,
 		"error", event.Error)
@@ -179,12 +179,12 @@ func (ms *MetricsService) RecordConnectionEvent(event *ConnectionEvent) {
 func (ms *MetricsService) GetDeviceMetrics(deviceID protocol.DeviceID) (*DeviceMetrics, error) {
 	ms.mutex.RLock()
 	defer ms.mutex.RUnlock()
-	
+
 	metrics, exists := ms.metrics[deviceID]
 	if !exists {
 		return nil, fmt.Errorf("no metrics found for device %s", deviceID.String())
 	}
-	
+
 	// Return a copy of the metrics
 	metricsCopy := *metrics
 	return &metricsCopy, nil
@@ -194,7 +194,7 @@ func (ms *MetricsService) GetDeviceMetrics(deviceID protocol.DeviceID) (*DeviceM
 func (ms *MetricsService) GetAllMetrics() map[protocol.DeviceID]*DeviceMetrics {
 	ms.mutex.RLock()
 	defer ms.mutex.RUnlock()
-	
+
 	// Return a copy of all metrics
 	result := make(map[protocol.DeviceID]*DeviceMetrics, len(ms.metrics))
 	for deviceID, metrics := range ms.metrics {
@@ -203,10 +203,10 @@ func (ms *MetricsService) GetAllMetrics() map[protocol.DeviceID]*DeviceMetrics {
 		durationsCopy := make([]time.Duration, len(metrics.ConnectionDurations))
 		copy(durationsCopy, metrics.ConnectionDurations)
 		metricsCopy.ConnectionDurations = durationsCopy
-		
+
 		result[deviceID] = &metricsCopy
 	}
-	
+
 	return result
 }
 
@@ -216,12 +216,12 @@ func (ms *MetricsService) GetConnectionSuccessRate(deviceID protocol.DeviceID) (
 	if err != nil {
 		return 0, err
 	}
-	
+
 	totalAttempts := metrics.ConnectionAttempts
 	if totalAttempts == 0 {
 		return 1.0, nil // No attempts, assume 100% success
 	}
-	
+
 	successRate := float64(metrics.SuccessfulConnections) / float64(totalAttempts)
 	return successRate, nil
 }
@@ -232,16 +232,16 @@ func (ms *MetricsService) GetAverageConnectionDuration(deviceID protocol.DeviceI
 	if err != nil {
 		return 0, err
 	}
-	
+
 	if len(metrics.ConnectionDurations) == 0 {
 		return 0, nil
 	}
-	
+
 	var total time.Duration
 	for _, duration := range metrics.ConnectionDurations {
 		total += duration
 	}
-	
+
 	return total / time.Duration(len(metrics.ConnectionDurations)), nil
 }
 
@@ -251,12 +251,12 @@ func (ms *MetricsService) GetFailureRate(deviceID protocol.DeviceID) (float64, e
 	if err != nil {
 		return 0, err
 	}
-	
+
 	totalAttempts := metrics.ConnectionAttempts
 	if totalAttempts == 0 {
 		return 0, nil
 	}
-	
+
 	failureRate := float64(metrics.FailedConnections) / float64(totalAttempts)
 	return failureRate, nil
 }
@@ -267,12 +267,12 @@ func (ms *MetricsService) GetTLSErrorRate(deviceID protocol.DeviceID) (float64, 
 	if err != nil {
 		return 0, err
 	}
-	
+
 	totalAttempts := metrics.ConnectionAttempts
 	if totalAttempts == 0 {
 		return 0, nil
 	}
-	
+
 	tlsErrorRate := float64(metrics.TLSHandshakeFailures) / float64(totalAttempts)
 	return tlsErrorRate, nil
 }
@@ -283,12 +283,12 @@ func (ms *MetricsService) GetCertificateErrorRate(deviceID protocol.DeviceID) (f
 	if err != nil {
 		return 0, err
 	}
-	
+
 	totalAttempts := metrics.ConnectionAttempts
 	if totalAttempts == 0 {
 		return 0, nil
 	}
-	
+
 	certErrorRate := float64(metrics.CertificateErrors) / float64(totalAttempts)
 	return certErrorRate, nil
 }
@@ -297,11 +297,11 @@ func (ms *MetricsService) GetCertificateErrorRate(deviceID protocol.DeviceID) (f
 func (ms *MetricsService) ResetMetrics(deviceID protocol.DeviceID) error {
 	ms.mutex.Lock()
 	defer ms.mutex.Unlock()
-	
+
 	if _, exists := ms.metrics[deviceID]; !exists {
 		return fmt.Errorf("no metrics found for device %s", deviceID.String())
 	}
-	
+
 	delete(ms.metrics, deviceID)
 	slog.Info("Reset connection metrics for device", "device", deviceID.String())
 	return nil
@@ -311,7 +311,7 @@ func (ms *MetricsService) ResetMetrics(deviceID protocol.DeviceID) error {
 func (ms *MetricsService) ResetAllMetrics() {
 	ms.mutex.Lock()
 	defer ms.mutex.Unlock()
-	
+
 	ms.metrics = make(map[protocol.DeviceID]*DeviceMetrics)
 	slog.Info("Reset all connection metrics")
 }
@@ -320,10 +320,10 @@ func (ms *MetricsService) ResetAllMetrics() {
 func (ms *MetricsService) cleanupOldMetrics() {
 	ms.mutex.Lock()
 	defer ms.mutex.Unlock()
-	
+
 	now := time.Now()
 	threshold := 30 * 24 * time.Hour // 30 days
-	
+
 	for deviceID, metrics := range ms.metrics {
 		// Check if we've seen this device recently
 		lastActivity := metrics.LastConnectionAttempt
@@ -333,9 +333,9 @@ func (ms *MetricsService) cleanupOldMetrics() {
 		if metrics.LastFailedConnection.After(lastActivity) {
 			lastActivity = metrics.LastFailedConnection
 		}
-		
+
 		if now.Sub(lastActivity) > threshold {
-			slog.Debug("Removing old connection metrics", 
+			slog.Debug("Removing old connection metrics",
 				"device", deviceID.String(),
 				"lastActivity", lastActivity.Format(time.RFC3339))
 			delete(ms.metrics, deviceID)
@@ -351,7 +351,7 @@ func CreateConnectionEvent(deviceID protocol.DeviceID, eventType ConnectionEvent
 		Error:     err,
 		Duration:  duration,
 	}
-	
+
 	// Extract certificate information if available
 	if cert != nil && len(cert.Certificate) > 0 {
 		if parsedCert, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
@@ -366,7 +366,7 @@ func CreateConnectionEvent(deviceID protocol.DeviceID, eventType ConnectionEvent
 			}
 		}
 	}
-	
+
 	return event
 }
 
@@ -374,18 +374,18 @@ func CreateConnectionEvent(deviceID protocol.DeviceID, eventType ConnectionEvent
 func (ms *MetricsService) GetMetricsSummary() map[string]interface{} {
 	ms.mutex.RLock()
 	defer ms.mutex.RUnlock()
-	
+
 	summary := make(map[string]interface{})
-	
+
 	totalDevices := len(ms.metrics)
 	summary["totalDevices"] = totalDevices
-	
+
 	if totalDevices == 0 {
 		return summary
 	}
-	
+
 	var totalAttempts, totalSuccess, totalFailures, totalTLSFailures, totalCertErrors int64
-	
+
 	for _, metrics := range ms.metrics {
 		totalAttempts += metrics.ConnectionAttempts
 		totalSuccess += metrics.SuccessfulConnections
@@ -393,19 +393,19 @@ func (ms *MetricsService) GetMetricsSummary() map[string]interface{} {
 		totalTLSFailures += metrics.TLSHandshakeFailures
 		totalCertErrors += metrics.CertificateErrors
 	}
-	
+
 	summary["totalConnectionAttempts"] = totalAttempts
 	summary["totalSuccessfulConnections"] = totalSuccess
 	summary["totalFailedConnections"] = totalFailures
 	summary["totalTLSHandshakeFailures"] = totalTLSFailures
 	summary["totalCertificateErrors"] = totalCertErrors
-	
+
 	if totalAttempts > 0 {
 		summary["overallSuccessRate"] = float64(totalSuccess) / float64(totalAttempts)
 		summary["overallFailureRate"] = float64(totalFailures) / float64(totalAttempts)
 		summary["overallTLSErrorRate"] = float64(totalTLSFailures) / float64(totalAttempts)
 		summary["overallCertificateErrorRate"] = float64(totalCertErrors) / float64(totalAttempts)
 	}
-	
+
 	return summary
 }

@@ -18,13 +18,13 @@ import (
 
 // MockConnection is a mock implementation of protocol.Connection for testing
 type MockConnection struct {
-	id           string
-	deviceID     protocol.DeviceID
-	priority     int
-	latency      time.Duration
-	closed       bool
-	closeError   error
-	established  time.Time
+	id          string
+	deviceID    protocol.DeviceID
+	priority    int
+	latency     time.Duration
+	closed      bool
+	closeError  error
+	established time.Time
 }
 
 func NewMockConnection(id string, deviceID protocol.DeviceID, priority int) *MockConnection {
@@ -71,21 +71,28 @@ func (m *MockConnection) Closed() <-chan struct{} {
 
 // Add all the required methods to satisfy the protocol.Connection interface
 func (m *MockConnection) Index(ctx context.Context, idx *protocol.Index) error { return nil }
-func (m *MockConnection) IndexUpdate(ctx context.Context, idxUp *protocol.IndexUpdate) error { return nil }
-func (m *MockConnection) Request(ctx context.Context, req *protocol.Request) ([]byte, error) { return nil, nil }
+
+func (m *MockConnection) IndexUpdate(ctx context.Context, idxUp *protocol.IndexUpdate) error {
+	return nil
+}
+
+func (m *MockConnection) Request(ctx context.Context, req *protocol.Request) ([]byte, error) {
+	return nil, nil
+}
 func (m *MockConnection) ClusterConfig(config *protocol.ClusterConfig, passwords map[string]string) {}
-func (m *MockConnection) DownloadProgress(ctx context.Context, dp *protocol.DownloadProgress) {}
-func (m *MockConnection) Start() {}
-func (m *MockConnection) Statistics() protocol.Statistics { return protocol.Statistics{} }
-func (m *MockConnection) ConnectionInfo() protocol.ConnectionInfo { return m }
-func (m *MockConnection) Type() string { return "mock" }
-func (m *MockConnection) Transport() string { return "mock" }
-func (m *MockConnection) IsLocal() bool { return false }
-func (m *MockConnection) RemoteAddr() net.Addr { return nil }
-func (m *MockConnection) String() string { return "mock-connection" }
-func (m *MockConnection) Crypto() string { return "mock" }
-func (m *MockConnection) EstablishedAt() time.Time { return m.established }
-func (m *MockConnection) ConnectionID() string { return m.id }
+func (m *MockConnection) DownloadProgress(ctx context.Context, dp *protocol.DownloadProgress)       {}
+func (m *MockConnection) Start()                                                                    {}
+func (m *MockConnection) Statistics() protocol.Statistics                                           { return protocol.Statistics{} }
+func (m *MockConnection) ConnectionInfo() protocol.ConnectionInfo                                   { return m }
+func (m *MockConnection) Type() string                                                              { return "mock" }
+func (m *MockConnection) Transport() string                                                         { return "mock" }
+func (m *MockConnection) IsLocal() bool                                                             { return false }
+func (m *MockConnection) RemoteAddr() net.Addr                                                      { return nil }
+func (m *MockConnection) String() string                                                            { return "mock-connection" }
+func (m *MockConnection) Crypto() string                                                            { return "mock" }
+func (m *MockConnection) EstablishedAt() time.Time                                                  { return m.established }
+func (m *MockConnection) ConnectionID() string                                                      { return m.id }
+func (m *MockConnection) GetPingLossRate() float64                                                   { return 0.0 }
 
 // TestDeviceConnectionTrackerMultipath tests that the device connection tracker
 // can handle multiple connections per device when multipath is enabled
@@ -106,6 +113,9 @@ func TestDeviceConnectionTrackerMultipath(t *testing.T) {
 	// And a mock config with multipath enabled
 	cfg := config.New(protocol.EmptyDeviceID)
 	cfg.Options.MultipathEnabled = true
+	
+	// Create a config wrapper
+	cfgWrapper := config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil)
 
 	// When we add multiple connections for the same device
 	conn1 := NewMockConnection("conn1", deviceID, 10)
@@ -118,9 +128,9 @@ func TestDeviceConnectionTrackerMultipath(t *testing.T) {
 	hello3 := protocol.Hello{NumConnections: 3}
 
 	// Add connections to tracker
-	tracker.accountAddedConnection(conn1, hello1, 0)
-	tracker.accountAddedConnection(conn2, hello2, 0)
-	tracker.accountAddedConnection(conn3, hello3, 0)
+	tracker.accountAddedConnection(conn1, hello1, 0, cfgWrapper)
+	tracker.accountAddedConnection(conn2, hello2, 0, cfgWrapper)
+	tracker.accountAddedConnection(conn3, hello3, 0, cfgWrapper)
 
 	// Then we should have 3 connections for the device
 	numConns := tracker.numConnectionsForDevice(deviceID)
@@ -154,6 +164,9 @@ func TestDeviceConnectionTrackerMultipathDisabled(t *testing.T) {
 	// And a mock config with multipath disabled
 	cfg := config.New(protocol.EmptyDeviceID)
 	cfg.Options.MultipathEnabled = false
+	
+	// Create a config wrapper
+	cfgWrapper := config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil)
 
 	// When we add multiple connections for the same device
 	conn1 := NewMockConnection("conn1", deviceID, 10)
@@ -164,8 +177,8 @@ func TestDeviceConnectionTrackerMultipathDisabled(t *testing.T) {
 	hello2 := protocol.Hello{NumConnections: 1}
 
 	// Add connections to tracker
-	tracker.accountAddedConnection(conn1, hello1, 0)
-	tracker.accountAddedConnection(conn2, hello2, 0)
+	tracker.accountAddedConnection(conn1, hello1, 0, cfgWrapper)
+	tracker.accountAddedConnection(conn2, hello2, 0, cfgWrapper)
 
 	// Then we should still have 2 connections for the device (behavior may change in future)
 	numConns := tracker.numConnectionsForDevice(deviceID)

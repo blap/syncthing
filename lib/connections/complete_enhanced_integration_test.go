@@ -19,59 +19,59 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 	// Setup
 	deviceID := protocol.LocalDeviceID
 	cfg := config.New(protocol.EmptyDeviceID)
-	
+
 	// Create all the enhanced components
 	healthMonitor := NewHealthMonitor(config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil), deviceID.String())
 	packetScheduler := NewPacketScheduler()
 	connectionPoolManager := NewConnectionPoolManager(3, 10, 30*time.Minute)
 	connectionMigrationManager := NewConnectionMigrationManager()
-	
+
 	// Create mock connections with different qualities
-	conn1 := NewEnhancedMockConnectionWithTrafficMetrics("conn1", deviceID, 10, 30.0, 500.0, 20.0) // Low quality
+	conn1 := NewEnhancedMockConnectionWithTrafficMetrics("conn1", deviceID, 10, 30.0, 500.0, 20.0)  // Low quality
 	conn2 := NewEnhancedMockConnectionWithTrafficMetrics("conn2", deviceID, 50, 60.0, 1000.0, 10.0) // Medium quality
-	conn3 := NewEnhancedMockConnectionWithTrafficMetrics("conn3", deviceID, 90, 90.0, 2000.0, 5.0) // High quality
-	
+	conn3 := NewEnhancedMockConnectionWithTrafficMetrics("conn3", deviceID, 90, 90.0, 2000.0, 5.0)  // High quality
+
 	// Test 1: Health monitoring
 	t.Run("HealthMonitoring", func(t *testing.T) {
 		healthMonitor.Start()
 		defer healthMonitor.Stop()
-		
+
 		// Record some metrics
 		healthMonitor.RecordLatency(10 * time.Millisecond)
 		healthMonitor.RecordPacketLoss(0.05) // 5% packet loss
-		
+
 		// Check that health score is updated
 		score := healthMonitor.GetHealthScore()
 		if score <= 0 || score > 100 {
 			t.Errorf("Expected health score between 0 and 100, got %f", score)
 		}
-		
+
 		// Test adaptive interval
 		interval := healthMonitor.GetInterval()
 		if interval <= 0 {
 			t.Error("Expected adaptive interval to be positive")
 		}
 	})
-	
+
 	// Test 2: Packet scheduling with traffic analysis
 	t.Run("PacketScheduling", func(t *testing.T) {
 		// Add connections to scheduler
 		packetScheduler.AddConnection(deviceID, conn1)
 		packetScheduler.AddConnection(deviceID, conn2)
 		packetScheduler.AddConnection(deviceID, conn3)
-		
+
 		// Test selection based on health
 		selected := packetScheduler.SelectConnection(deviceID)
 		if selected == nil {
 			t.Error("Expected a connection to be selected")
 		}
-		
+
 		// Test selection based on traffic metrics
 		selectedTraffic := packetScheduler.SelectConnectionBasedOnTraffic(deviceID)
 		if selectedTraffic == nil {
 			t.Error("Expected a connection to be selected based on traffic")
 		}
-		
+
 		// Test load balancing
 		distribution := make(map[string]int)
 		for i := 0; i < 100; i++ {
@@ -80,35 +80,35 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 				distribution[selected.ConnectionID()]++
 			}
 		}
-		
+
 		// All connections should have received some packets
 		if len(distribution) != 3 {
 			t.Errorf("Expected all 3 connections to receive packets, got %d", len(distribution))
 		}
 	})
-	
+
 	// Test 3: Bandwidth aggregation
 	t.Run("BandwidthAggregation", func(t *testing.T) {
 		// Simulate data transfer on connections
-		conn1.SimulateDataTransfer(1000000, 500000) // 1MB out, 0.5MB in
+		conn1.SimulateDataTransfer(1000000, 500000)  // 1MB out, 0.5MB in
 		conn2.SimulateDataTransfer(2000000, 1000000) // 2MB out, 1MB in
 		conn3.SimulateDataTransfer(3000000, 1500000) // 3MB out, 1.5MB in
-		
+
 		// Test aggregated bandwidth calculation
 		aggregatedBandwidth := packetScheduler.GetAggregatedBandwidth(deviceID)
 		if aggregatedBandwidth <= 0 {
 			t.Error("Expected positive aggregated bandwidth")
 		}
-		
+
 		// Test individual connection bandwidth
 		conn1Bandwidth := packetScheduler.GetConnectionBandwidth(deviceID, conn1.ConnectionID())
 		conn2Bandwidth := packetScheduler.GetConnectionBandwidth(deviceID, conn2.ConnectionID())
 		conn3Bandwidth := packetScheduler.GetConnectionBandwidth(deviceID, conn3.ConnectionID())
-		
+
 		if conn1Bandwidth <= 0 || conn2Bandwidth <= 0 || conn3Bandwidth <= 0 {
 			t.Error("Expected positive bandwidth for all connections")
 		}
-		
+
 		// Test data chunk distribution
 		chunkSize := int64(1024 * 1024) // 1MB chunks
 		distributedChunks := packetScheduler.DistributeDataChunks(deviceID, chunkSize)
@@ -116,48 +116,48 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 			t.Error("Expected data chunks to be distributed")
 		}
 	})
-	
+
 	// Test 4: Connection pooling
 	t.Run("ConnectionPooling", func(t *testing.T) {
 		// Get pool for device
 		pool := connectionPoolManager.GetPool(deviceID)
-		
+
 		// Add connections to pool
 		added1 := pool.AddConnection(conn1)
 		added2 := pool.AddConnection(conn2)
 		added3 := pool.AddConnection(conn3)
-		
+
 		if !added1 || !added2 || !added3 {
 			t.Error("Expected all connections to be added to pool")
 		}
-		
+
 		// Test different allocation strategies
 		roundRobin := pool.GetConnection(RoundRobinStrategy)
 		healthBased := pool.GetConnection(HealthBasedStrategy)
 		random := pool.GetConnection(RandomStrategy)
 		leastUsed := pool.GetConnection(LeastUsedStrategy)
-		
+
 		if roundRobin == nil || healthBased == nil || random == nil || leastUsed == nil {
 			t.Error("Expected all strategies to return connections")
 		}
-		
+
 		// Test returning connections
 		pool.ReturnConnection(conn1)
 		pool.ReturnConnection(conn2)
 		pool.ReturnConnection(conn3)
 	})
-	
+
 	// Test 5: Connection migration
 	t.Run("ConnectionMigration", func(t *testing.T) {
 		// Register a transfer
 		connectionMigrationManager.RegisterTransfer(conn1, "default", "test-file", 1024*1024, 1024)
-		
+
 		// Update transfer progress
 		connectionMigrationManager.UpdateTransferProgress(conn1, "default", "test-file", 512*1024, 500)
-		
+
 		// Add a pending request
 		connectionMigrationManager.AddPendingRequest(conn1, "default", "test-file", 1, 500, 512*1024, 1024, []byte("hash"))
-		
+
 		// Get transfer state
 		state, exists := connectionMigrationManager.GetTransferState(conn1, "default", "test-file")
 		if !exists {
@@ -166,20 +166,20 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 		if state == nil {
 			t.Error("Expected transfer state to be non-nil")
 		}
-		
+
 		// Test migration decision
 		// Create a simple service interface for testing
 		service := &mockService{connections: []protocol.Connection{conn1, conn2, conn3}}
 		_ = connectionMigrationManager.ShouldMigrateTransfer(conn1, service, "default", "test-file")
 		// This might be true or false depending on the specific conditions
-		
+
 		// Test getting best connection for transfer
 		bestConn := connectionMigrationManager.GetBestConnectionForTransfer(deviceID, service, "default", "test-file")
 		if bestConn == nil {
 			t.Error("Expected best connection to be found")
 		}
 	})
-	
+
 	// Test 6: Lazy health monitoring
 	t.Run("LazyHealthMonitoring", func(t *testing.T) {
 		// Test monitoring state transitions
@@ -187,17 +187,17 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 		if initialState != monitoringStateActive {
 			t.Errorf("Expected initial state to be active, got %v", initialState)
 		}
-		
+
 		// Record activity to keep it active
 		healthMonitor.RecordActivity()
-		
+
 		// Test that state remains active
 		state := healthMonitor.GetMonitoringState()
 		if state != monitoringStateActive {
 			t.Errorf("Expected state to remain active after activity, got %v", state)
 		}
 	})
-	
+
 	// Cleanup
 	connectionPoolManager.CloseAllPools()
 }

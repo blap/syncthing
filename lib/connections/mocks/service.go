@@ -30,6 +30,10 @@ type Service struct {
 	connectionStatusReturnsOnCall map[int]struct {
 		result1 map[string]connections.ConnectionStatusEntry
 	}
+	DialNowStub        func()
+	dialNowMutex       sync.RWMutex
+	dialNowArgsForCall []struct {
+	}
 	ExternalAddressesStub        func() []string
 	externalAddressesMutex       sync.RWMutex
 	externalAddressesArgsForCall []struct {
@@ -210,6 +214,30 @@ func (fake *Service) ConnectionStatusReturnsOnCall(i int, result1 map[string]con
 	fake.connectionStatusReturnsOnCall[i] = struct {
 		result1 map[string]connections.ConnectionStatusEntry
 	}{result1}
+}
+
+func (fake *Service) DialNow() {
+	fake.dialNowMutex.Lock()
+	fake.dialNowArgsForCall = append(fake.dialNowArgsForCall, struct {
+	}{})
+	stub := fake.DialNowStub
+	fake.recordInvocation("DialNow", []interface{}{})
+	fake.dialNowMutex.Unlock()
+	if stub != nil {
+		fake.DialNowStub()
+	}
+}
+
+func (fake *Service) DialNowCallCount() int {
+	fake.dialNowMutex.RLock()
+	defer fake.dialNowMutex.RUnlock()
+	return len(fake.dialNowArgsForCall)
+}
+
+func (fake *Service) DialNowCalls(stub func()) {
+	fake.dialNowMutex.Lock()
+	defer fake.dialNowMutex.Unlock()
+	fake.DialNowStub = stub
 }
 
 func (fake *Service) ExternalAddresses() []string {

@@ -326,7 +326,7 @@ func versionerFsFromFolderCfg(cfg config.FolderConfiguration) (versionsFs fs.Fil
 		versionsFs = fs.NewFilesystem(cfg.Versioning.FSType.ToFS(), cfg.Versioning.FSPath)
 	}
 	l.Debugf("%s (%s) folder using %s (%s) versioner dir", folderFs.URI(), folderFs.Type(), versionsFs.URI(), versionsFs.Type())
-	return
+	return versionsFs
 }
 
 func findAllVersions(fs fs.Filesystem, filePath string) []string {

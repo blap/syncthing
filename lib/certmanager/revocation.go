@@ -35,10 +35,10 @@ func NewRevocationService() *RevocationService {
 // Serve implements suture.Service
 func (rs *RevocationService) Serve(ctx context.Context) error {
 	slog.Info("Starting certificate revocation service")
-	
+
 	// In a full implementation, this would periodically check CRLs or OCSP
 	// For now, we just provide the framework
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -58,14 +58,14 @@ func (rs *RevocationService) Serve(ctx context.Context) error {
 func (rs *RevocationService) RevokeCertificate(cert *x509.Certificate) error {
 	rs.mutex.Lock()
 	defer rs.mutex.Unlock()
-	
+
 	serial := cert.SerialNumber.String()
 	rs.revokedCerts[serial] = true
-	
-	slog.Info("Certificate revoked", 
+
+	slog.Info("Certificate revoked",
 		"serial", serial,
 		"subject", cert.Subject.String())
-	
+
 	return nil
 }
 
@@ -73,15 +73,15 @@ func (rs *RevocationService) RevokeCertificate(cert *x509.Certificate) error {
 func (rs *RevocationService) IsCertificateRevoked(cert *x509.Certificate) (bool, error) {
 	rs.mutex.RLock()
 	defer rs.mutex.RUnlock()
-	
+
 	serial := cert.SerialNumber.String()
 	if revoked, exists := rs.revokedCerts[serial]; exists {
 		return revoked, nil
 	}
-	
+
 	// In a full implementation, we would check CRLs or OCSP here
 	// For now, we assume it's not revoked if not in our list
-	
+
 	return false, nil
 }
 
@@ -89,18 +89,18 @@ func (rs *RevocationService) IsCertificateRevoked(cert *x509.Certificate) (bool,
 func (rs *RevocationService) RemoveRevokedCertificate(cert *x509.Certificate) error {
 	rs.mutex.Lock()
 	defer rs.mutex.Unlock()
-	
+
 	serial := cert.SerialNumber.String()
 	if _, exists := rs.revokedCerts[serial]; !exists {
 		return fmt.Errorf("certificate with serial %s is not in revocation list", serial)
 	}
-	
+
 	delete(rs.revokedCerts, serial)
-	
-	slog.Info("Certificate removed from revocation list", 
+
+	slog.Info("Certificate removed from revocation list",
 		"serial", serial,
 		"subject", cert.Subject.String())
-	
+
 	return nil
 }
 
@@ -108,11 +108,11 @@ func (rs *RevocationService) RemoveRevokedCertificate(cert *x509.Certificate) er
 func (rs *RevocationService) GetRevokedCertificates() []string {
 	rs.mutex.RLock()
 	defer rs.mutex.RUnlock()
-	
+
 	serials := make([]string, 0, len(rs.revokedCerts))
 	for serial := range rs.revokedCerts {
 		serials = append(serials, serial)
 	}
-	
+
 	return serials
 }

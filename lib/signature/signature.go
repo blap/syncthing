@@ -56,7 +56,7 @@ func GenerateKeys() (privKey []byte, pubKey []byte, err error) {
 		Bytes: bs,
 	})
 
-	return
+	return privKey, pubKey, err
 }
 
 // Sign computes the hash of data and signs it with the private key, returning

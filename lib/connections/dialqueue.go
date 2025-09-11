@@ -14,6 +14,10 @@ import (
 	"github.com/syncthing/syncthing/lib/rand"
 )
 
+// recentlySeenCutoff is the time cutoff for considering a device as "recently seen"
+// when shuffling the dial queue
+const recentlySeenCutoff = 24 * time.Hour
+
 type dialQueueEntry struct {
 	id         protocol.DeviceID
 	lastSeen   time.Time

@@ -6,6 +6,11 @@ message Announce {
   bytes id = 1;
   repeated string addresses = 2;
   int64 instance_id = 3;
+  // Added for v2 compatibility
+  uint32 version = 4;      // Protocol version
+  uint64 features = 5;     // Feature flags
+  string client_name = 6;  // Client name for better identification
+  string client_version = 7; // Client version for better identification
 }
 
 message QueryDevice {

@@ -24,16 +24,16 @@ func TestDiscoveryCache(t *testing.T) {
 	cfg := config.New(protocol.LocalDeviceID)
 	cfg.Options.LocalAnnEnabled = false
 	cfg.Options.GlobalAnnEnabled = false
-	
+
 	// Enable our new discovery cache feature
 	// TODO: Add configuration options for discovery cache
-	
+
 	manager := NewManager(
-		protocol.LocalDeviceID, 
-		config.Wrap("", cfg, protocol.LocalDeviceID, events.NoopLogger), 
-		tls.Certificate{}, 
-		events.NoopLogger, 
-		nil, 
+		protocol.LocalDeviceID,
+		config.Wrap("", cfg, protocol.LocalDeviceID, events.NoopLogger),
+		tls.Certificate{},
+		events.NoopLogger,
+		nil,
 		registry.New(),
 		nil, // Add the missing ConnectionServiceSubsetInterface parameter
 	).(*manager)
@@ -44,7 +44,6 @@ func TestDiscoveryCache(t *testing.T) {
 	// Try to lookup device B - should return cached address
 	ctx := context.Background()
 	_, err := manager.Lookup(ctx, deviceB)
-	
 	// TODO: This test will fail until we implement the feature
 	// For now, we'll check that we get the expected behavior from existing code
 	if err != nil {

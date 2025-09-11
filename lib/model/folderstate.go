@@ -140,7 +140,7 @@ func (s *stateTracker) getState() (current folderState, changed time.Time, err e
 	s.mut.Lock()
 	current, changed, err = s.current, s.changed, s.err
 	s.mut.Unlock()
-	return
+	return current, changed, err
 }
 
 // setError sets the folder state to FolderError with the specified error or

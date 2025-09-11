@@ -82,26 +82,47 @@ type OptionsConfiguration struct {
 	ConnectionPriorityQUICWAN          int `json:"connectionPriorityQuicWan" xml:"connectionPriorityQuicWan" default:"40"`
 	ConnectionPriorityRelay            int `json:"connectionPriorityRelay" xml:"connectionPriorityRelay" default:"50"`
 	ConnectionPriorityUpgradeThreshold int `json:"connectionPriorityUpgradeThreshold" xml:"connectionPriorityUpgradeThreshold" default:"0"`
-	
+
 	// Adaptive keep-alive settings
 	AdaptiveKeepAliveEnabled bool `json:"adaptiveKeepAliveEnabled" xml:"adaptiveKeepAliveEnabled" default:"true"`
 	AdaptiveKeepAliveMinS    int  `json:"adaptiveKeepAliveMinS" xml:"adaptiveKeepAliveMinS" default:"10"`
 	AdaptiveKeepAliveMaxS    int  `json:"adaptiveKeepAliveMaxS" xml:"adaptiveKeepAliveMaxS" default:"60"`
-	
+
 	// Multipath settings
 	MultipathEnabled bool `json:"multipathEnabled" xml:"multipathEnabled" default:"false"`
-	
+
 	// Folder priority settings
 	FolderSyncStrategy string `json:"folderSyncStrategy" xml:"folderSyncStrategy" default:"random"`
 	RankTieBreaker     string `json:"rankTieBreaker" xml:"rankTieBreaker" default:"alphabetical"`
-	
+
 	// Discovery cache settings
-	DiscoveryCacheEnabled       bool `json:"discoveryCacheEnabled" xml:"discoveryCacheEnabled" default:"false"`
+	DiscoveryCacheEnabled        bool `json:"discoveryCacheEnabled" xml:"discoveryCacheEnabled" default:"false"`
 	PeerAssistedDiscoveryEnabled bool `json:"peerAssistedDiscoveryEnabled" xml:"peerAssistedDiscoveryEnabled" default:"false"`
-	
+
 	// Transfer settings
 	TransferChunkSizeBytes int `json:"transferChunkSizeBytes" xml:"transferChunkSizeBytes" default:"1048576"`
-	
+
+	// Connection stability settings
+	ConnectionStabilityEnabled   bool `json:"connectionStabilityEnabled" xml:"connectionStabilityEnabled" default:"true"`
+	ConnectionStabilityMinScore  int  `json:"connectionStabilityMinScore" xml:"connectionStabilityMinScore" default:"70"`
+	ConnectionStabilityThreshold int  `json:"connectionStabilityThreshold" xml:"connectionStabilityThreshold" default:"10"`
+
+	// Protocol fallback settings
+	ProtocolFallbackEnabled   bool     `json:"protocolFallbackEnabled" xml:"protocolFallbackEnabled" default:"true"`
+	ProtocolFallbackThreshold int      `json:"protocolFallbackThreshold" xml:"protocolFallbackThreshold" default:"3"`
+	PreferredProtocols        []string `json:"preferredProtocols" xml:"preferredProtocol" default:"quic,tcp,relay"`
+
+	// Connection replacement thresholds
+	ConnectionReplacementAgeThreshold      int `json:"connectionReplacementAgeThreshold" xml:"connectionReplacementAgeThreshold" default:"30"`           // seconds
+	ConnectionReplacementActivityThreshold int `json:"connectionReplacementActivityThreshold" xml:"connectionReplacementActivityThreshold" default:"60"` // seconds
+	ConnectionReplacementPriorityThreshold int `json:"connectionReplacementPriorityThreshold" xml:"connectionReplacementPriorityThreshold" default:"10"` // priority points
+
+	// Random port configuration for improved connection stability
+	RandomPortsEnabled       bool `json:"randomPortsEnabled" xml:"randomPortsEnabled" default:"false"`
+	RandomPortRangeStart     int  `json:"randomPortRangeStart" xml:"randomPortRangeStart" default:"1024"`
+	RandomPortRangeEnd       int  `json:"randomPortRangeEnd" xml:"randomPortRangeEnd" default:"65535"`
+	RandomPortPersistence    bool `json:"randomPortPersistence" xml:"randomPortPersistence" default:"true"`
+
 	// Legacy deprecated
 	DeprecatedUPnPEnabled        bool     `json:"-" xml:"upnpEnabled,omitempty"`        // Deprecated: Do not use.
 	DeprecatedUPnPLeaseM         int      `json:"-" xml:"upnpLeaseMinutes,omitempty"`   // Deprecated: Do not use.
@@ -158,6 +179,67 @@ func (opts *OptionsConfiguration) prepare(guiPWIsSet bool) {
 	}
 	if opts.ConnectionPriorityTCPWAN <= opts.ConnectionPriorityTCPLAN {
 		opts.ConnectionPriorityTCPWAN = opts.ConnectionPriorityTCPLAN + 1
+	}
+
+	// Ensure connection stability settings are within valid ranges
+	if opts.ConnectionStabilityMinScore < 0 {
+		opts.ConnectionStabilityMinScore = 0
+	}
+	if opts.ConnectionStabilityMinScore > 100 {
+		opts.ConnectionStabilityMinScore = 100
+	}
+	if opts.ConnectionStabilityThreshold < 0 {
+		opts.ConnectionStabilityThreshold = 0
+	}
+	if opts.ConnectionStabilityThreshold > 50 {
+		opts.ConnectionStabilityThreshold = 50
+	}
+
+	// Ensure protocol fallback settings are within valid ranges
+	if opts.ProtocolFallbackThreshold < 1 {
+		opts.ProtocolFallbackThreshold = 1
+	}
+	if opts.ProtocolFallbackThreshold > 10 {
+		opts.ProtocolFallbackThreshold = 10
+	}
+
+	// Ensure connection replacement thresholds are within valid ranges
+	if opts.ConnectionReplacementAgeThreshold < 5 {
+		opts.ConnectionReplacementAgeThreshold = 5
+	}
+	if opts.ConnectionReplacementAgeThreshold > 300 {
+		opts.ConnectionReplacementAgeThreshold = 300
+	}
+
+	if opts.ConnectionReplacementActivityThreshold < 10 {
+		opts.ConnectionReplacementActivityThreshold = 10
+	}
+	if opts.ConnectionReplacementActivityThreshold > 600 {
+		opts.ConnectionReplacementActivityThreshold = 600
+	}
+
+	if opts.ConnectionReplacementPriorityThreshold < 1 {
+		opts.ConnectionReplacementPriorityThreshold = 1
+	}
+	if opts.ConnectionReplacementPriorityThreshold > 50 {
+		opts.ConnectionReplacementPriorityThreshold = 50
+	}
+
+	// Set default preferred protocols if none specified
+	if len(opts.PreferredProtocols) == 0 {
+		opts.PreferredProtocols = []string{"quic", "tcp", "relay"}
+	}
+
+	// Validate random port configuration
+	if opts.RandomPortRangeStart < 1024 {
+		opts.RandomPortRangeStart = 1024
+	}
+	if opts.RandomPortRangeEnd > 65535 {
+		opts.RandomPortRangeEnd = 65535
+	}
+	if opts.RandomPortRangeStart >= opts.RandomPortRangeEnd {
+		opts.RandomPortRangeStart = 1024
+		opts.RandomPortRangeEnd = 65535
 	}
 
 	// If usage reporting is enabled we must have a unique ID.

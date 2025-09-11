@@ -11,11 +11,14 @@ import com.syncthing.android.data.repository.SyncthingRepository
 import com.syncthing.android.ui.fragments.DashboardFragment
 import com.syncthing.android.ui.fragments.FoldersFragment
 import com.syncthing.android.ui.fragments.DevicesFragment
+import com.syncthing.android.ui.fragments.ConfigurationFragment
 import com.syncthing.android.ui.fragments.SettingsFragment
 import com.syncthing.android.viewmodel.MainViewModel
 import com.syncthing.android.viewmodel.SyncthingViewModelFactory
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import android.content.Context
+import android.view.MenuItem
 
 class NavigationActivity : AppCompatActivity() {
     
@@ -51,6 +54,10 @@ class NavigationActivity : AppCompatActivity() {
                 }
                 R.id.navigation_devices -> {
                     loadFragment(DevicesFragment())
+                    true
+                }
+                R.id.navigation_configuration -> {
+                    loadFragment(ConfigurationFragment())
                     true
                 }
                 R.id.navigation_settings -> {

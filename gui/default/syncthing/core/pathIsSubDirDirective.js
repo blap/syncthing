@@ -29,27 +29,38 @@ angular.module('syncthing.core')
                     scope.folderPathErrors.isParent = false;
                     scope.folderPathErrors.otherID = "";
                     scope.folderPathErrors.otherLabel = "";
+                    scope.folderPathErrors.message = "";
+                    
                     if (!viewValue) {
                         return true;
                     }
+                    
                     for (var folderID in scope.folders) {
                         if (folderID === scope.currentFolder.id) {
                             continue;
                         }
+                        
                         if (isSubDir(scope.folders[folderID].path, viewValue)) {
                             scope.folderPathErrors.otherID = folderID;
                             scope.folderPathErrors.otherLabel = scope.folders[folderID].label;
                             scope.folderPathErrors.isSub = true;
+                            // Show informational message but don't prevent saving
+                            scope.folderPathErrors.message = "Folder path note: This folder is a subdirectory of folder '" + 
+                                (scope.folders[folderID].label || folderID) + "'. This configuration is now supported but please ensure proper organization.";
                             break;
                         }
-                        if (viewValue !== "" &&
-                            isSubDir(viewValue, scope.folders[folderID].path)) {
+                        
+                        if (viewValue !== "" && isSubDir(viewValue, scope.folders[folderID].path)) {
                             scope.folderPathErrors.otherID = folderID;
                             scope.folderPathErrors.otherLabel = scope.folders[folderID].label;
                             scope.folderPathErrors.isParent = true;
+                            // Show informational message but don't prevent saving
+                            scope.folderPathErrors.message = "Folder path note: Folder '" + 
+                                (scope.folders[folderID].label || folderID) + "' is a subdirectory of this folder. This configuration is now supported but please ensure proper organization.";
                             break;
                         }
                     }
+                    
                     return true;
                 };
             }

@@ -15,10 +15,10 @@ import (
 type MemoryLimiter struct {
 	// Total memory limit in bytes
 	limit int64
-	
+
 	// Current memory usage
 	currentUsage int64
-	
+
 	// Map of component IDs to their memory usage
 	componentUsage map[string]int64
 	mu             sync.RWMutex
@@ -52,7 +52,7 @@ func (ml *MemoryLimiter) GetCurrentUsage() int64 {
 func (ml *MemoryLimiter) RequestMemory(componentID string, size int64) bool {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
-	
+
 	// If no limit is set, allow allocation
 	limit := atomic.LoadInt64(&ml.limit)
 	if limit <= 0 {
@@ -60,13 +60,13 @@ func (ml *MemoryLimiter) RequestMemory(componentID string, size int64) bool {
 		atomic.AddInt64(&ml.currentUsage, size)
 		return true
 	}
-	
+
 	// Check if this allocation would exceed the limit
 	newUsage := atomic.LoadInt64(&ml.currentUsage) + size
 	if newUsage > limit {
 		return false
 	}
-	
+
 	// Allocate memory
 	ml.componentUsage[componentID] = size
 	atomic.AddInt64(&ml.currentUsage, size)
@@ -77,7 +77,7 @@ func (ml *MemoryLimiter) RequestMemory(componentID string, size int64) bool {
 func (ml *MemoryLimiter) ReleaseMemory(componentID string, size int64) {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
-	
+
 	currentUsage := ml.componentUsage[componentID]
 	if currentUsage <= size {
 		delete(ml.componentUsage, componentID)
@@ -92,7 +92,7 @@ func (ml *MemoryLimiter) ReleaseMemory(componentID string, size int64) {
 func (ml *MemoryLimiter) GetComponentUsage(componentID string) int64 {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
-	
+
 	return ml.componentUsage[componentID]
 }
 
@@ -100,13 +100,13 @@ func (ml *MemoryLimiter) GetComponentUsage(componentID string) int64 {
 func (ml *MemoryLimiter) GetComponents() map[string]int64 {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
-	
+
 	// Create a copy of the map
 	result := make(map[string]int64, len(ml.componentUsage))
 	for k, v := range ml.componentUsage {
 		result[k] = v
 	}
-	
+
 	return result
 }
 
@@ -116,7 +116,7 @@ func (ml *MemoryLimiter) IsMemoryAvailable(size int64) bool {
 	if limit <= 0 {
 		return true
 	}
-	
+
 	currentUsage := atomic.LoadInt64(&ml.currentUsage)
 	return currentUsage+size <= limit
 }

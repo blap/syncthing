@@ -106,7 +106,7 @@ func runLocks(t *testing.T, iterations int, c *TimeoutCond, d time.Duration) (su
 		}
 		c.L.Unlock()
 	}
-	return
+	return succ, fail
 }
 
 type testClock struct {

@@ -384,8 +384,6 @@ func generate83Name(longName string) string {
 	return strings.ToUpper(nameWithoutExt) + "~1" + strings.ToUpper(ext)
 }
 
-
-
 func isMaybeWin83(absPath string) bool {
 	if !strings.Contains(absPath, "~") {
 		return false

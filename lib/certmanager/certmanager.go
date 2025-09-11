@@ -23,21 +23,21 @@ import (
 const (
 	// How often to check for certificate expiration
 	checkInterval = 6 * time.Hour
-	
+
 	// Renew certificates when they have less than this time left
 	renewalThreshold = 30 * 24 * time.Hour // 30 days
-	
+
 	// Certificate lifetime for newly generated certificates
 	// certLifetimeDays is now defined in alerts.go to avoid duplication
 )
 
 type Service struct {
 	suture.Service
-	certFile string
-	keyFile  string
+	certFile   string
+	keyFile    string
 	commonName string
-	cert     *tls.Certificate
-	onRenew  func(tls.Certificate)
+	cert       *tls.Certificate
+	onRenew    func(tls.Certificate)
 }
 
 // New creates a new certificate manager service
@@ -57,16 +57,16 @@ func (s *Service) SetCertificate(cert tls.Certificate) {
 
 // Serve implements suture.Service
 func (s *Service) Serve(ctx context.Context) error {
-	slog.Info("Starting certificate manager service", 
+	slog.Info("Starting certificate manager service",
 		"certFile", s.certFile,
 		"checkInterval", checkInterval.String())
-	
+
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
-	
+
 	// Check immediately on startup
 	s.checkCertificate()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -82,7 +82,7 @@ func (s *Service) Serve(ctx context.Context) error {
 func (s *Service) checkCertificate() {
 	// First check if certificate files exist and are valid
 	certExists := s.checkCertificateFiles()
-	
+
 	if !certExists {
 		slog.Info("Certificate manager: Certificate files missing, regenerating")
 		if err := s.regenerateCertificate(); err != nil {
@@ -91,12 +91,12 @@ func (s *Service) checkCertificate() {
 		}
 		return
 	}
-	
+
 	if s.cert == nil {
 		slog.Debug("Certificate manager: No certificate to check")
 		return
 	}
-	
+
 	// Parse the certificate if needed
 	leaf := s.cert.Leaf
 	if leaf == nil && len(s.cert.Certificate) > 0 {
@@ -111,7 +111,7 @@ func (s *Service) checkCertificate() {
 			return
 		}
 	}
-	
+
 	if leaf == nil {
 		slog.Warn("Certificate manager: No valid certificate to check")
 		// If we don't have a valid certificate, try to regenerate it
@@ -120,32 +120,32 @@ func (s *Service) checkCertificate() {
 		}
 		return
 	}
-	
+
 	slog.Debug("Certificate manager: Checking certificate",
 		"notBefore", leaf.NotBefore.Format(time.RFC3339),
 		"notAfter", leaf.NotAfter.Format(time.RFC3339),
 		"subject", leaf.Subject.String())
-	
+
 	// Check if certificate needs renewal
 	timeLeft := time.Until(leaf.NotAfter)
 	if timeLeft < renewalThreshold {
 		slog.Info("Certificate manager: Certificate needs renewal",
 			"expires", leaf.NotAfter.Format(time.RFC3339),
 			"timeLeft", timeLeft.String())
-		
+
 		// Generate new certificate
 		newCert, err := certutil.NewCertificate(s.certFile, s.keyFile, s.commonName, certLifetimeDays, true)
 		if err != nil {
 			slog.Error("Certificate manager: Failed to generate new certificate", slogutil.Error(err))
 			return
 		}
-		
+
 		slog.Info("Certificate manager: Successfully generated new certificate",
 			"notAfter", newCert.Leaf.NotAfter.Format(time.RFC3339))
-		
+
 		// Update the certificate reference
 		s.cert = &newCert
-		
+
 		// Notify subscribers
 		if s.onRenew != nil {
 			s.onRenew(newCert)
@@ -163,49 +163,49 @@ func (s *Service) checkCertificateFiles() bool {
 	as := &AlertService{}
 	resolvedCertFile, resolvedKeyFile, err := as.resolveCertificateFiles(s.certFile)
 	if err != nil {
-		slog.Debug("Certificate manager: Failed to resolve certificate files", 
-			"certFile", s.certFile, 
+		slog.Debug("Certificate manager: Failed to resolve certificate files",
+			"certFile", s.certFile,
 			"error", err)
 		return false
 	}
-	
+
 	// Try to load the certificate to verify it's valid
 	if _, err := tls.LoadX509KeyPair(resolvedCertFile, resolvedKeyFile); err != nil {
-		slog.Warn("Certificate manager: Certificate/key pair is invalid", 
-			"certFile", resolvedCertFile, 
+		slog.Warn("Certificate manager: Certificate/key pair is invalid",
+			"certFile", resolvedCertFile,
 			"keyFile", resolvedKeyFile,
 			"error", err)
 		return false
 	}
-	
+
 	// Update our service with the resolved paths
 	s.certFile = resolvedCertFile
 	s.keyFile = resolvedKeyFile
-	
+
 	return true
 }
 
 // regenerateCertificate creates a new certificate/key pair
 func (s *Service) regenerateCertificate() error {
-	slog.Info("Certificate manager: Regenerating certificate", 
-		"certFile", s.certFile, 
+	slog.Info("Certificate manager: Regenerating certificate",
+		"certFile", s.certFile,
 		"keyFile", s.keyFile)
-	
+
 	newCert, err := certutil.NewCertificate(s.certFile, s.keyFile, s.commonName, certLifetimeDays, true)
 	if err != nil {
 		return fmt.Errorf("failed to generate new certificate: %w", err)
 	}
-	
+
 	slog.Info("Certificate manager: Successfully regenerated certificate",
 		"notAfter", newCert.Leaf.NotAfter.Format(time.RFC3339))
-	
+
 	// Update the certificate reference
 	s.cert = &newCert
-	
+
 	// Notify subscribers
 	if s.onRenew != nil {
 		s.onRenew(newCert)
 	}
-	
+
 	return nil
 }

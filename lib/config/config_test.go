@@ -1373,7 +1373,15 @@ func loadWrapTest(fs fs.Filesystem, path string, myID protocol.DeviceID, evLogge
 		return nil, 0, err
 	}
 
-	return Wrap(filepath.Join(testFs.URI(), path), cfg, myID, evLogger), originalVersion, nil
+	// Remove the "fake://" prefix from testFs.URI() before joining with path,
+	// as filepath.Join expects a filesystem path, not a URI.
+	// Extract the path part from testFs.URI() by removing the "fake://" prefix and any query parameters.
+	fakeFsURI := testFs.URI()
+	fakeFsPath := strings.TrimPrefix(fakeFsURI, "fake://")
+	if idx := strings.Index(fakeFsPath, "?"); idx != -1 {
+		fakeFsPath = fakeFsPath[:idx]
+	}
+	return Wrap(filepath.Join(fakeFsPath, path), cfg, myID, evLogger), originalVersion, nil
 }
 
 func load(path string, myID protocol.DeviceID) (*testWrapper, error) {

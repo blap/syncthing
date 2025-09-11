@@ -53,7 +53,7 @@ type manager struct {
 
 	finders map[string]cachedFinder
 	mut     sync.RWMutex
-	
+
 	// Connection cache for storing successful direct connections
 	connectionCache *connectionCache
 }
@@ -70,7 +70,7 @@ func NewManager(myID protocol.DeviceID, cfg config.Wrapper, cert tls.Certificate
 		connSvc:       connSvc,
 
 		finders: make(map[string]cachedFinder),
-		
+
 		// Create a connection cache with 60 minutes TTL
 		connectionCache: newConnectionCache(60 * time.Minute),
 	}
@@ -255,7 +255,7 @@ func (m *manager) AddConnectionToCache(deviceID protocol.DeviceID, addresses []s
 	if !m.cfg.Options().DiscoveryCacheEnabled {
 		return
 	}
-	
+
 	m.connectionCache.Add(deviceID, addresses)
 	slog.Debug("Added connection to cache", "device", deviceID, "addresses", addresses)
 }

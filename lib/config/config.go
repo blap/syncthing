@@ -369,6 +369,7 @@ func (cfg *Configuration) prepareFolders(myID protocol.DeviceID, existingDevices
 			return nil, fmt.Errorf("folder %q: %w", folder.ID, errFolderIDDuplicate)
 		}
 
+		// Call the original prepare method
 		folder.prepare(myID, existingDevices)
 
 		existingFolders[folder.ID] = folder
@@ -377,6 +378,22 @@ func (cfg *Configuration) prepareFolders(myID protocol.DeviceID, existingDevices
 			sharedFolders[dev.DeviceID] = append(sharedFolders[dev.DeviceID], folder.ID)
 		}
 	}
+	
+	// Perform additional validation after all folders are prepared
+	for i := range cfg.Folders {
+		folder := &cfg.Folders[i]
+		
+		// Validate marker name
+		if err := folder.validateMarkerName(); err != nil {
+			return nil, fmt.Errorf("folder %q: %w", folder.ID, err)
+		}
+		
+		// Check for path overlaps
+		if err := folder.checkPathOverlaps(cfg.Folders); err != nil {
+			return nil, fmt.Errorf("folder %q: %w", folder.ID, err)
+		}
+	}
+	
 	// Ensure that the folder list is sorted by ID
 	slices.SortFunc(cfg.Folders, func(a, b FolderConfiguration) int {
 		return strings.Compare(a.ID, b.ID)
@@ -384,6 +401,8 @@ func (cfg *Configuration) prepareFolders(myID protocol.DeviceID, existingDevices
 	return sharedFolders, nil
 }
 
+// prepareDevices prepares each device configuration with the list of shared folders.
+// This method should only be called during configuration preparation to avoid race conditions.
 func (cfg *Configuration) prepareDevices(sharedFolders map[protocol.DeviceID][]string) {
 	for i := range cfg.Devices {
 		cfg.Devices[i].prepare(sharedFolders[cfg.Devices[i].DeviceID])

@@ -10,6 +10,9 @@ The Android app implements a version synchronization mechanism to ensure compati
 2. Compatibility verification
 3. Update notifications
 4. Automatic API constant synchronization
+5. Feature compatibility matrix
+6. Graceful degradation for unsupported features
+7. Automatic update mechanism
 
 ## Components
 
@@ -20,14 +23,17 @@ The Android app implements a version synchronization mechanism to ensure compati
 
 ### 2. Services
 
-- `VersionCheckService`: Handles version comparison logic
-- `VersionCheckWorker`: Background worker for periodic version checking
-- `VersionNotificationService`: Shows notifications when updates are available
+- `VersionCheckService`: Handles version comparison logic and REST API communication
+- `VersionCheckWorker`: Background worker for periodic version checking with flexible scheduling
+- `VersionNotificationService`: Shows notifications when updates are available or compatibility issues detected
+- `AutoUpdateService`: Handles automatic downloading and installation of Android app updates
+- `FeatureDegradationService`: Manages graceful degradation of unsupported features
 
 ### 3. Utilities
 
 - `ApiConstants`: Shared constants between desktop and Android versions
 - `VersionCompatibilityChecker`: Sophisticated version compatibility checking logic
+- `FeatureCompatibilityMatrix`: Tracks feature availability across versions
 
 ## Implementation Details
 
@@ -39,6 +45,8 @@ The Android app periodically checks the desktop Syncthing version through the `/
 2. Periodically in the background (every 24 hours)
 3. When the user manually triggers a check
 
+The system uses Retrofit for API communication and handles API keys securely.
+
 ### Compatibility Checking
 
 The app compares the Android app version with the desktop version to determine:
@@ -46,6 +54,14 @@ The app compares the Android app version with the desktop version to determine:
 1. If they are compatible
 2. If an update is recommended
 3. If there are any breaking changes
+4. Which features are supported
+
+The compatibility checker considers:
+- Major version compatibility (critical)
+- Minor version differences (feature availability)
+- Patch version differences (bug fixes)
+- API endpoint availability based on shared constants
+- Feature support based on version
 
 ### Update Notifications
 
@@ -54,8 +70,11 @@ When a newer desktop version is detected, the app shows a notification to the us
 1. The current desktop version
 2. The current Android app version
 3. A recommendation to update
+4. Codename and status information (beta, release candidate)
 
-## API Constant Synchronization
+Different notification types are used for updates vs. compatibility issues.
+
+### API Constant Synchronization
 
 To ensure the Android app stays in sync with API changes in the desktop version:
 
@@ -68,12 +87,42 @@ To regenerate the constants:
 go run script/generate-android-constants.go
 ```
 
+### Feature Compatibility Matrix
+
+The system implements a feature compatibility matrix that tracks which features are available with which versions:
+
+| Feature | Android Min Version | Desktop Min Version | Description |
+|---------|---------------------|---------------------|-------------|
+| Basic Sync | 1.0.0 | 1.0.0 | Core file synchronization |
+| Versioning | 1.0.0 | 1.0.0 | Basic file versioning |
+| Advanced Ignore | 1.2.0 | 1.2.0 | Advanced ignore patterns |
+| External Versioning | 1.1.0 | 1.1.0 | External versioning scripts |
+| Custom Discovery | 1.0.0 | 1.0.0 | Custom discovery servers |
+| Bandwidth Limits | 1.1.0 | 1.1.0 | Bandwidth rate limiting |
+
+### Graceful Degradation
+
+When features are not supported due to version incompatibility:
+
+1. The app automatically disables unsupported features
+2. Users are notified about disabled features
+3. Alternative workflows are provided when possible
+
+### Automatic Updates
+
+The system can automatically download and install Android app updates:
+
+1. Checks for new versions from official sources
+2. Downloads updates securely
+3. Verifies update signatures
+4. Installs updates with user consent
+
 ## Future Enhancements
 
-1. **Automatic Updates**: Implement automatic downloading and installation of Android app updates
-2. **Feature Compatibility Matrix**: Track which features are available in which versions
-3. **Graceful Degradation**: Automatically disable unsupported features instead of showing errors
-4. **API Contract Testing**: Automated tests to verify API compatibility between versions
+1. **Smart Update Scheduling**: Implement intelligent update scheduling based on user activity patterns, network conditions, and battery status
+2. **Incremental Update Support**: Enable delta updates to reduce bandwidth usage
+3. **Cross-Platform Feature Parity**: Establish mechanisms to track feature availability across platforms
+4. **Enhanced Security**: Add additional security measures for update verification
 
 ## Testing
 
@@ -83,6 +132,28 @@ The version synchronization feature should be tested with:
 2. Network failure scenarios
 3. Notification display and interaction
 4. Background service behavior
+5. API contract verification
+6. Feature compatibility matrix validation
+7. Update mechanism functionality
+
+### Test Categories
+
+1. **Unit Tests**: 
+   - Version parsing and comparison
+   - Compatibility checking logic
+   - Feature support verification
+   - API constant validation
+
+2. **Integration Tests**:
+   - REST API communication
+   - Background worker functionality
+   - Notification system
+   - Update mechanism
+
+3. **UI Tests**:
+   - Notification display and interaction
+   - Feature enablement/disablement
+   - User flows for update handling
 
 ## Security Considerations
 
@@ -90,3 +161,5 @@ The version synchronization feature should be tested with:
 2. API keys are securely stored
 3. Version information is validated before use
 4. Update notifications link to official sources only
+5. APK signatures are verified before installation
+6. Updates are downloaded from official sources only

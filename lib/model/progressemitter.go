@@ -278,7 +278,7 @@ func (t *ProgressEmitter) BytesCompleted(folder string) (bytes int64) {
 		bytes += s.Progress().BytesDone
 	}
 	l.Debugf("progress emitter: bytes completed for %s: %d", folder, bytes)
-	return
+	return bytes
 }
 
 func (t *ProgressEmitter) String() string {

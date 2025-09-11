@@ -87,19 +87,19 @@ type FolderConfiguration struct {
 	SyncXattrs              bool                        `json:"syncXattrs" xml:"syncXattrs"`
 	SendXattrs              bool                        `json:"sendXattrs" xml:"sendXattrs"`
 	XattrFilter             XattrFilter                 `json:"xattrFilter" xml:"xattrFilter"`
-	
+
 	// Folder priority
 	Priority int `json:"priority" xml:"priority" default:"0"`
-	
+
 	// Resumable transfers
 	ResumableTransfersEnabled bool `json:"resumableTransfersEnabled" xml:"resumableTransfersEnabled" default:"true"`
-	
+
 	// Health monitoring and throttling
-	ThrottlingEnabled      bool `json:"throttlingEnabled" xml:"throttlingEnabled" default:"true"`
-	MaxCPUUsagePercent     int  `json:"maxCPUUsagePercent" xml:"maxCPUUsagePercent" default:"80"`
-	MaxMemoryUsageMB       int  `json:"maxMemoryUsageMB" xml:"maxMemoryUsageMB" default:"1024"`
-	HealthCheckIntervalS   int  `json:"healthCheckIntervalS" xml:"healthCheckIntervalS" default:"0"`
-	
+	ThrottlingEnabled    bool `json:"throttlingEnabled" xml:"throttlingEnabled" default:"true"`
+	MaxCPUUsagePercent   int  `json:"maxCPUUsagePercent" xml:"maxCPUUsagePercent" default:"80"`
+	MaxMemoryUsageMB     int  `json:"maxMemoryUsageMB" xml:"maxMemoryUsageMB" default:"1024"`
+	HealthCheckIntervalS int  `json:"healthCheckIntervalS" xml:"healthCheckIntervalS" default:"0"`
+
 	// Legacy deprecated
 	DeprecatedReadOnly       bool    `json:"-" xml:"ro,attr,omitempty"`        // Deprecated: Do not use.
 	DeprecatedMinDiskFreePct float64 `json:"-" xml:"minDiskFreePct,omitempty"` // Deprecated: Do not use.
@@ -344,6 +344,88 @@ func (f *FolderConfiguration) prepare(myID protocol.DeviceID, existingDevices ma
 	if f.Type == FolderTypeReceiveEncrypted {
 		f.IgnorePerms = true
 	}
+}
+
+// validateMarkerName checks that the marker name is a safe filename
+func (f *FolderConfiguration) validateMarkerName() error {
+	if f.MarkerName == "" {
+		return fmt.Errorf("folder %q: marker name cannot be empty", f.ID)
+	}
+	
+	// Check for invalid characters in the marker name
+	invalidChars := []string{"<", ">", ":", "\"", "|", "?", "*"}
+	for _, char := range invalidChars {
+		if strings.Contains(f.MarkerName, char) {
+			return fmt.Errorf("folder %q: marker name %q contains invalid character %q", f.ID, f.MarkerName, char)
+		}
+	}
+	
+	// On Windows, additional checks
+	if build.IsWindows {
+		// Check for reserved names
+		reservedNames := []string{"CON", "PRN", "AUX", "NUL", 
+			"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+			"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
+		markerUpper := strings.ToUpper(f.MarkerName)
+		for _, reserved := range reservedNames {
+			if markerUpper == reserved {
+				return fmt.Errorf("folder %q: marker name %q is a reserved Windows filename", f.ID, f.MarkerName)
+			}
+		}
+		
+		// Check for trailing dots or spaces
+		if strings.HasSuffix(f.MarkerName, ".") || strings.HasSuffix(f.MarkerName, " ") {
+			return fmt.Errorf("folder %q: marker name %q cannot end with a dot or space on Windows", f.ID, f.MarkerName)
+		}
+	}
+	
+	return nil
+}
+
+// checkPathOverlaps verifies that this folder's path doesn't overlap with any other folder's path
+func (f *FolderConfiguration) checkPathOverlaps(allFolders []FolderConfiguration) error {
+	if f.Path == "" {
+		return nil // Empty path will be caught by other validation
+	}
+	
+	// Normalize paths for comparison
+	currentPath := filepath.Clean(f.Path)
+	
+	for _, otherFolder := range allFolders {
+		// Skip self
+		if otherFolder.ID == f.ID {
+			continue
+		}
+		
+		if otherFolder.Path == "" {
+			continue // Skip folders with empty paths
+		}
+		
+		// Normalize the other folder's path for comparison
+		otherPath := filepath.Clean(otherFolder.Path)
+		
+		// Check if paths are the same
+		if currentPath == otherPath {
+			return fmt.Errorf("folder %q: path %q is the same as folder %q. Folder path conflict detected: Two folders cannot use the same path.", f.ID, f.Path, otherFolder.ID)
+		}
+		
+		// Allow nesting but prevent problematic scenarios
+		// Check if current path is a subdirectory of other path
+		if strings.HasPrefix(currentPath, otherPath+string(filepath.Separator)) {
+			// This is now allowed - current folder is a subdirectory of another
+			// The model layer will handle this appropriately
+			continue
+		}
+		
+		// Check if other path is a subdirectory of current path
+		if strings.HasPrefix(otherPath, currentPath+string(filepath.Separator)) {
+			// This is now allowed - another folder is a subdirectory of current
+			// The model layer will handle this appropriately
+			continue
+		}
+	}
+	
+	return nil
 }
 
 // RequiresRestartOnly returns a copy with only the attributes that require

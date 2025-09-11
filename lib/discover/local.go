@@ -26,6 +26,7 @@ import (
 	"github.com/syncthing/syncthing/internal/gen/discoproto"
 	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/beacon"
+	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
@@ -45,6 +46,17 @@ type localClient struct {
 	forcedBcastTick chan time.Time
 
 	*cache
+	
+	// For adaptive broadcast intervals
+	broadcastInterval time.Duration
+	discoveryStats    *discoveryStatistics
+}
+
+// discoveryStatistics tracks discovery success rates for adaptive intervals
+type discoveryStatistics struct {
+	successCount int
+	totalCount   int
+	lastUpdate   time.Time
 }
 
 const (
@@ -52,18 +64,35 @@ const (
 	CacheLifeTime     = 3 * BroadcastInterval
 	Magic             = uint32(0x2EA7D90B) // same as in BEP
 	v13Magic          = uint32(0x7D79BC40) // previous version
+	// Added for v2 compatibility
+	v2Magic           = uint32(0x2EA7D90C) // v2 version
+	ProtocolVersion   = uint32(2)          // Current protocol version
+	
+	// Adaptive interval constants
+	MinBroadcastInterval = 10 * time.Second
+	MaxBroadcastInterval = 60 * time.Second
+	AdaptationWindow     = 5 * time.Minute
+)
+
+// Feature flags for extended capabilities
+const (
+	FeatureMultipleConnections = 1 << iota
+	FeatureEd25519Keys
+	FeatureExtendedAttributes
 )
 
 func NewLocal(id protocol.DeviceID, addr string, addrList AddressLister, evLogger events.Logger) (FinderService, error) {
 	c := &localClient{
-		Supervisor:      suture.New("local", svcutil.SpecWithDebugLogger()),
-		myID:            id,
-		addrList:        addrList,
-		evLogger:        evLogger,
-		localBcastTick:  time.NewTicker(BroadcastInterval).C,
-		forcedBcastTick: make(chan time.Time),
-		localBcastStart: time.Now(),
-		cache:           newCache(),
+		Supervisor:        suture.New("local", svcutil.SpecWithDebugLogger()),
+		myID:              id,
+		addrList:          addrList,
+		evLogger:          evLogger,
+		broadcastInterval: BroadcastInterval,
+		discoveryStats:    &discoveryStatistics{},
+		localBcastTick:    time.NewTicker(BroadcastInterval).C,
+		forcedBcastTick:   make(chan time.Time),
+		localBcastStart:   time.Now(),
+		cache:             newCache(),
 	}
 
 	host, port, err := net.SplitHostPort(addr)
@@ -100,7 +129,7 @@ func (c *localClient) Lookup(_ context.Context, device protocol.DeviceID) (addre
 		}
 	}
 
-	return
+	return addresses, err
 }
 
 func (c *localClient) String() string {
@@ -128,10 +157,21 @@ func (c *localClient) announcementPkt(instanceID int64, msg []byte) ([]byte, boo
 		return msg, false
 	}
 
+	// Get build information for client identification
+	clientName := "syncthing"
+	clientVersion := build.Version
+	if build.Extra != "" {
+		clientVersion += "+" + build.Extra
+	}
+
 	pkt := &discoproto.Announce{
-		Id:         c.myID[:],
-		Addresses:  addrs,
-		InstanceId: instanceID,
+		Id:            c.myID[:],
+		Addresses:     addrs,
+		InstanceId:    instanceID,
+		Version:       ProtocolVersion,
+		Features:      c.getSupportedFeatures(),
+		ClientName:    clientName,
+		ClientVersion: clientVersion,
 	}
 	bs, _ := proto.Marshal(pkt)
 
@@ -145,22 +185,102 @@ func (c *localClient) announcementPkt(instanceID int64, msg []byte) ([]byte, boo
 	return msg, true
 }
 
+// getSupportedFeatures returns a bitmask of features supported by this client
+func (c *localClient) getSupportedFeatures() uint64 {
+	var features uint64
+	
+	// Check if we support multiple connections (v2 feature)
+	features |= FeatureMultipleConnections
+	
+	// Check if we support Ed25519 keys (v2 feature)
+	features |= FeatureEd25519Keys
+	
+	// Check if we support extended attributes
+	features |= FeatureExtendedAttributes
+	
+	return features
+}
+
 func (c *localClient) sendLocalAnnouncements(ctx context.Context) error {
 	var msg []byte
 	var ok bool
 	instanceID := rand.Int63()
+	
+	// Use adaptive ticker
+	ticker := time.NewTicker(c.broadcastInterval)
+	defer ticker.Stop()
+	
 	for {
 		if msg, ok = c.announcementPkt(instanceID, msg[:0]); ok {
 			c.beacon.Send(msg)
 		}
 
 		select {
-		case <-c.localBcastTick:
+		case <-ticker.C:
+			// Adapt interval based on discovery success rate
+			c.adaptBroadcastInterval()
+			ticker.Reset(c.broadcastInterval)
 		case <-c.forcedBcastTick:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
+}
+
+// adaptBroadcastInterval adjusts the broadcast interval based on discovery success rates
+func (c *localClient) adaptBroadcastInterval() {
+	stats := c.discoveryStats
+	
+	// Only adapt if we have enough data
+	if stats.totalCount < 5 {
+		return
+	}
+	
+	// Reset statistics periodically
+	if time.Since(stats.lastUpdate) > AdaptationWindow {
+		stats.successCount = 0
+		stats.totalCount = 0
+		stats.lastUpdate = time.Now()
+		return
+	}
+	
+	// Calculate success rate
+	successRate := float64(stats.successCount) / float64(stats.totalCount)
+	
+	// Adjust interval based on success rate
+	if successRate > 0.8 {
+		// High success rate, we can broadcast less frequently
+		c.broadcastInterval = min(c.broadcastInterval*11/10, MaxBroadcastInterval)
+	} else if successRate < 0.3 {
+		// Low success rate, we should broadcast more frequently
+		c.broadcastInterval = max(c.broadcastInterval*9/10, MinBroadcastInterval)
+	}
+	
+	slog.Debug("Adaptive broadcast interval", "interval", c.broadcastInterval, "successRate", successRate)
+}
+
+// min returns the smaller of two time.Duration values
+func min(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// minInt returns the smaller of two integers
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// max returns the larger of two time.Duration values
+func max(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (c *localClient) recvAnnouncements(ctx context.Context) error {
@@ -185,7 +305,12 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 		magic := binary.BigEndian.Uint32(buf)
 		switch magic {
 		case Magic:
-			// All good
+			// Current version - all good
+			c.handleAnnouncement(ctx, buf, addr, ProtocolVersion)
+
+		case v2Magic:
+			// v2 version with extended protocol
+			c.handleAnnouncement(ctx, buf, addr, 2)
 
 		case v13Magic:
 			// Old version
@@ -197,33 +322,76 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 
 		default:
 			slog.DebugContext(ctx, "Incorrect magic", "magic", magic, "address", addr)
+			// Log additional information for debugging
+			slog.DebugContext(ctx, "Raw packet data", "data", hex.EncodeToString(buf[:minInt(len(buf), 16)]))
 			continue
-		}
-
-		var pkt discoproto.Announce
-		err := proto.Unmarshal(buf[4:], &pkt)
-		if err != nil && !errors.Is(err, io.EOF) {
-			slog.DebugContext(ctx, "Failed to unmarshal local announcement", "address", addr, slogutil.Error(err), "packet", hex.Dump(buf[4:]))
-			continue
-		}
-
-		id, _ := protocol.DeviceIDFromBytes(pkt.Id)
-		slog.DebugContext(ctx, "Received local announcement", "address", addr, "device", id)
-
-		var newDevice bool
-		if !bytes.Equal(pkt.Id, c.myID[:]) {
-			newDevice = c.registerDevice(addr, &pkt)
-		}
-
-		if newDevice {
-			// Force a transmit to announce ourselves, if we are ready to do
-			// so right away.
-			select {
-			case c.forcedBcastTick <- time.Now():
-			default:
-			}
 		}
 	}
+}
+
+// handleAnnouncement processes a received announcement packet
+func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr net.Addr, version uint32) {
+	var pkt discoproto.Announce
+	err := proto.Unmarshal(buf[4:], &pkt)
+	if err != nil && !errors.Is(err, io.EOF) {
+		slog.DebugContext(ctx, "Failed to unmarshal local announcement", "address", addr, slogutil.Error(err), "packet", hex.Dump(buf[4:]))
+		return
+	}
+
+	id, _ := protocol.DeviceIDFromBytes(pkt.Id)
+	
+	// Enhanced logging with more device information
+	clientInfo := pkt.ClientName + " " + pkt.ClientVersion
+	if clientInfo == " " {
+		clientInfo = "unknown"
+	}
+	
+	slog.DebugContext(ctx, "Received local announcement", 
+		"address", addr, 
+		"device", id, 
+		"version", pkt.Version, 
+		"client", clientInfo,
+		"features", c.getFeatureNames(pkt.Features))
+
+	// Check version compatibility
+	if !c.isVersionCompatible(pkt.Version) {
+		slog.WarnContext(ctx, "Version incompatibility detected", 
+			"device", id, 
+			"remoteVersion", pkt.Version, 
+			"localVersion", ProtocolVersion,
+			"remoteClient", clientInfo)
+		
+		// Provide specific guidance based on version difference
+		if pkt.Version < ProtocolVersion {
+			slog.WarnContext(ctx, "Remote device is using an older version - consider upgrading for better compatibility", 
+				"device", id)
+		} else if pkt.Version > ProtocolVersion {
+			slog.WarnContext(ctx, "Remote device is using a newer version - consider upgrading", 
+				"device", id)
+		}
+		// Continue processing but log the incompatibility
+	}
+
+	var newDevice bool
+	if !bytes.Equal(pkt.Id, c.myID[:]) {
+		newDevice = c.registerDevice(addr, &pkt)
+	}
+
+	if newDevice {
+		// Force a transmit to announce ourselves, if we are ready to do
+		// so right away.
+		select {
+		case c.forcedBcastTick <- time.Now():
+		default:
+		}
+	}
+}
+
+// isVersionCompatible checks if the remote protocol version is compatible with ours
+func (c *localClient) isVersionCompatible(remoteVersion uint32) bool {
+	// For now, we consider versions compatible if they're both >= 1
+	// In the future, we might want more sophisticated compatibility checking
+	return remoteVersion >= 1 && remoteVersion <= ProtocolVersion+1
 }
 
 func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) bool {
@@ -233,59 +401,82 @@ func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) 
 
 	id, err := protocol.DeviceIDFromBytes(device.Id)
 	if err != nil {
-		l.Debugf("discover: Failed to parse device ID %x: %v", device.Id, err)
+		slog.Debug("Failed to parse device ID", "deviceIdBytes", device.Id, "error", err)
 		return false
 	}
 
 	ce, existsAlready := c.Get(id)
 	isNewDevice := !existsAlready || time.Since(ce.when) > CacheLifeTime || ce.instanceID != device.InstanceId
 
+	slog.Debug("Device discovery status", 
+		"device", id,
+		"existsAlready", existsAlready,
+		"cacheExpired", time.Since(ce.when) > CacheLifeTime,
+		"instanceIdChanged", ce.instanceID != device.InstanceId,
+		"isNewDevice", isNewDevice)
+
+	// Update discovery statistics
+	c.discoveryStats.totalCount++
+	if isNewDevice {
+		c.discoveryStats.successCount++
+	}
+	c.discoveryStats.lastUpdate = time.Now()
+
 	// Any empty or unspecified addresses should be set to the source address
 	// of the announcement. We also skip any addresses we can't parse.
 
-	l.Debugln("discover: Registering addresses for", id)
+	slog.Debug("Registering addresses for device", "device", id, "numAddresses", len(device.Addresses))
 	var validAddresses []string
-	for _, addr := range device.Addresses {
+	for i, addr := range device.Addresses {
+		slog.Debug("Processing address", "device", id, "addressIndex", i, "address", addr)
 		u, err := url.Parse(addr)
 		if err != nil {
+			slog.Debug("Failed to parse URL", "device", id, "address", addr, "error", err)
 			continue
 		}
 
 		tcpAddr, err := net.ResolveTCPAddr("tcp", u.Host)
 		if err != nil {
+			slog.Debug("Failed to resolve TCP address", "device", id, "host", u.Host, "error", err)
 			continue
 		}
 
 		if len(tcpAddr.IP) == 0 || tcpAddr.IP.IsUnspecified() {
+			slog.Debug("Processing unspecified IP address", "device", id, "originalAddress", addr)
 			srcAddr, err := net.ResolveTCPAddr("tcp", src.String())
 			if err != nil {
+				slog.Debug("Failed to resolve source address", "device", id, "source", src.String(), "error", err)
 				continue
 			}
 
 			// Do not use IPv6 source address if requested scheme is tcp4
 			if u.Scheme == "tcp4" && srcAddr.IP.To4() == nil {
+				slog.Debug("Skipping IPv6 source address for tcp4 scheme", "device", id)
 				continue
 			}
 
 			// Do not use IPv4 source address if requested scheme is tcp6
 			if u.Scheme == "tcp6" && srcAddr.IP.To4() != nil {
+				slog.Debug("Skipping IPv4 source address for tcp6 scheme", "device", id)
 				continue
 			}
 
 			host, _, err := net.SplitHostPort(src.String())
 			if err != nil {
+				slog.Debug("Failed to split host port", "device", id, "source", src.String(), "error", err)
 				continue
 			}
 			u.Host = net.JoinHostPort(host, strconv.Itoa(tcpAddr.Port))
-			l.Debugf("discover: Reconstructed URL is %v", u)
+			slog.Debug("Reconstructed URL", "device", id, "reconstructedURL", u.String())
 			validAddresses = append(validAddresses, u.String())
-			l.Debugf("discover: Replaced address %v in %s to get %s", tcpAddr.IP, addr, u.String())
+			slog.Debug("Replaced address", "device", id, "original", addr, "replacedWith", u.String())
 		} else {
 			validAddresses = append(validAddresses, addr)
-			l.Debugf("discover: Accepted address %s verbatim", addr)
+			slog.Debug("Accepted address verbatim", "device", id, "address", addr)
 		}
 	}
 
+	slog.Debug("Updating device cache", "device", id, "numValidAddresses", len(validAddresses), "addresses", validAddresses)
 	c.Set(id, CacheEntry{
 		Addresses:  validAddresses,
 		when:       time.Now(),
@@ -293,7 +484,23 @@ func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) 
 		instanceID: device.InstanceId,
 	})
 
-	if isNewDevice {
+	// Log additional information if available
+	if device.Version > 0 || device.ClientName != "" {
+		deviceInfo := map[string]interface{}{
+			"device":  id.String(),
+			"addrs":   validAddresses,
+			"version": device.Version,
+			"client":  device.ClientName + " " + device.ClientVersion,
+		}
+		
+		// Add feature information if available
+		if device.Features > 0 {
+			deviceInfo["features"] = c.getFeatureNames(device.Features)
+		}
+		
+		c.evLogger.Log(events.DeviceDiscovered, deviceInfo)
+	} else {
+		// Fall back to original logging format for compatibility
 		c.evLogger.Log(events.DeviceDiscovered, map[string]interface{}{
 			"device": id.String(),
 			"addrs":  validAddresses,
@@ -301,6 +508,21 @@ func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) 
 	}
 
 	return isNewDevice
+}
+
+// getFeatureNames returns a slice of feature names for the given feature bitmask
+func (c *localClient) getFeatureNames(features uint64) []string {
+	var names []string
+	if features&FeatureMultipleConnections != 0 {
+		names = append(names, "multiple-connections")
+	}
+	if features&FeatureEd25519Keys != 0 {
+		names = append(names, "ed25519-keys")
+	}
+	if features&FeatureExtendedAttributes != 0 {
+		names = append(names, "extended-attributes")
+	}
+	return names
 }
 
 // filterUndialableLocal returns the list of addresses after removing any

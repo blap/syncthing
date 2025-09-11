@@ -357,7 +357,7 @@ func parseOptions(dsn string) (server string, opts serverOptions, err error) {
 	p.RawQuery = ""
 	server = p.String()
 
-	return
+	return server, opts, err
 }
 
 // queryBool returns the query parameter parsed as a boolean. An empty value

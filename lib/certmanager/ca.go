@@ -41,7 +41,7 @@ func (cas *CAService) LoadCACertificates(caPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat CA path %s: %w", caPath, err)
 	}
-	
+
 	var certFiles []string
 	if info.IsDir() {
 		// Load all .pem and .crt files from directory
@@ -49,12 +49,12 @@ func (cas *CAService) LoadCACertificates(caPath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read CA directory %s: %w", caPath, err)
 		}
-		
+
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
-			
+
 			name := entry.Name()
 			if filepath.Ext(name) == ".pem" || filepath.Ext(name) == ".crt" {
 				certFiles = append(certFiles, filepath.Join(caPath, name))
@@ -64,7 +64,7 @@ func (cas *CAService) LoadCACertificates(caPath string) error {
 		// Single file
 		certFiles = append(certFiles, caPath)
 	}
-	
+
 	// Load each certificate file
 	for _, certFile := range certFiles {
 		if err := cas.loadCACertificateFile(certFile); err != nil {
@@ -73,10 +73,10 @@ func (cas *CAService) LoadCACertificates(caPath string) error {
 		}
 		slog.Debug("Loaded CA certificate", "file", certFile)
 	}
-	
+
 	// Update certificate pool
 	cas.updateCertPool()
-	
+
 	slog.Info("Loaded CA certificates", "count", len(cas.caCertificates), "files", len(certFiles))
 	return nil
 }
@@ -88,13 +88,13 @@ func (cas *CAService) loadCACertificateFile(certFile string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read certificate file %s: %w", certFile, err)
 	}
-	
+
 	// Parse certificates
 	certs, err := parseCertificates(certData)
 	if err != nil {
 		return fmt.Errorf("failed to parse certificates from %s: %w", certFile, err)
 	}
-	
+
 	// Add certificates to CA list
 	for _, cert := range certs {
 		// Only add CA certificates (BasicConstraints with CA=true)
@@ -104,14 +104,14 @@ func (cas *CAService) loadCACertificateFile(certFile string) error {
 			slog.Debug("Skipping non-CA certificate", "subject", cert.Subject.String(), "file", certFile)
 		}
 	}
-	
+
 	return nil
 }
 
 // parseCertificates parses PEM-encoded certificates
 func parseCertificates(data []byte) ([]*x509.Certificate, error) {
 	var certs []*x509.Certificate
-	
+
 	// Try to parse as PEM
 	for len(data) > 0 {
 		cert, rest, err := parsePEMCertificate(data)
@@ -127,11 +127,11 @@ func parseCertificates(data []byte) ([]*x509.Certificate, error) {
 			}
 			return certs, nil
 		}
-		
+
 		certs = append(certs, cert)
 		data = rest
 	}
-	
+
 	return certs, nil
 }
 
@@ -143,7 +143,7 @@ func parsePEMCertificate(data []byte) (*x509.Certificate, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	return cert, nil, nil
 }
 
@@ -161,18 +161,17 @@ func (cas *CAService) VerifyWithCA(cert *x509.Certificate) error {
 	if cas.caCertPool == nil {
 		return fmt.Errorf("no CA certificates loaded")
 	}
-	
+
 	// Verify certificate against CA pool
 	_, err := cert.Verify(x509.VerifyOptions{
 		Roots:       cas.caCertPool,
 		CurrentTime: time.Now(),
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	})
-	
 	if err != nil {
 		return fmt.Errorf("certificate verification against CA failed: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -185,10 +184,10 @@ func (cas *CAService) LoadDefaultCAs() error {
 		// Create empty pool as fallback
 		pool = x509.NewCertPool()
 	}
-	
+
 	// Store the pool for later use
 	cas.caCertPool = pool
-	
+
 	slog.Info("Loaded default system CA certificates")
 	return nil
 }
@@ -197,12 +196,12 @@ func (cas *CAService) LoadDefaultCAs() error {
 func (cas *CAService) LoadSyncthingCAs() error {
 	// Load from Syncthing's CA directory if it exists
 	caDir := filepath.Join(locations.GetBaseDir(locations.ConfigBaseDir), "ca")
-	
+
 	if _, err := os.Stat(caDir); os.IsNotExist(err) {
 		slog.Debug("Syncthing CA directory does not exist", "dir", caDir)
 		return nil
 	}
-	
+
 	return cas.LoadCACertificates(caDir)
 }
 
@@ -234,7 +233,7 @@ func (cas *CAService) LoadCRLs(crlPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat CRL path %s: %w", crlPath, err)
 	}
-	
+
 	var crlFiles []string
 	if info.IsDir() {
 		// Load all .crl files from directory
@@ -242,12 +241,12 @@ func (cas *CAService) LoadCRLs(crlPath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read CRL directory %s: %w", crlPath, err)
 		}
-		
+
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
-			
+
 			name := entry.Name()
 			if filepath.Ext(name) == ".crl" {
 				crlFiles = append(crlFiles, filepath.Join(crlPath, name))
@@ -257,10 +256,10 @@ func (cas *CAService) LoadCRLs(crlPath string) error {
 		// Single file
 		crlFiles = append(crlFiles, crlPath)
 	}
-	
+
 	// Store CRL files for later use
 	cas.crlFiles = append(cas.crlFiles, crlFiles...)
-	
+
 	slog.Info("Loaded CRL files", "count", len(crlFiles))
 	return nil
 }
@@ -269,11 +268,11 @@ func (cas *CAService) LoadCRLs(crlPath string) error {
 func (cas *CAService) CheckRevocation(cert *x509.Certificate) error {
 	// This would check against loaded CRLs or OCSP
 	// For now, we'll just log that revocation checking would happen here
-	
-	slog.Debug("Certificate revocation check would be performed here", 
+
+	slog.Debug("Certificate revocation check would be performed here",
 		"subject", cert.Subject.String(),
 		"serial", cert.SerialNumber.String())
-	
+
 	return nil
 }
 

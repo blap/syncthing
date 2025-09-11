@@ -17,14 +17,14 @@ import (
 func TestDebugHealthScore(t *testing.T) {
 	cfg := config.Wrap("/tmp/test-config.xml", config.New(protocol.EmptyDeviceID), protocol.EmptyDeviceID, nil)
 	hm := NewHealthMonitor(cfg, "device1")
-	
+
 	// Test with very bad network conditions
 	hm.RecordLatency(600 * time.Millisecond)
 	t.Logf("After bad latency (600ms): Health score = %f, Interval = %v", hm.GetHealthScore(), hm.GetInterval())
-	
+
 	hm.RecordPacketLoss(20.0)
 	t.Logf("After packet loss (20%%): Health score = %f, Interval = %v", hm.GetHealthScore(), hm.GetInterval())
-	
+
 	// Test with multiple bad measurements
 	for i := 0; i < 5; i++ {
 		hm.RecordLatency(600 * time.Millisecond)

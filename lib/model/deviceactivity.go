@@ -17,13 +17,13 @@ import (
 type DeviceActivityEntry struct {
 	// Current activity count (number of outstanding requests)
 	CurrentActivity int
-	
+
 	// CPU usage percentage for this device's operations
 	CPUUsagePercent float64
-	
+
 	// Last update time for metrics
 	LastUpdate time.Time
-	
+
 	// Moving average of activity levels
 	ActivityAverage float64
 }
@@ -46,26 +46,26 @@ func newDeviceActivity() *deviceActivity {
 func (m *deviceActivity) leastBusy(availability []Availability) int {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	
+
 	low := 2<<30 - 1
 	best := -1
-	
+
 	for i := range availability {
 		deviceEntry, exists := m.act[availability[i].ID]
 		if !exists {
 			// No activity recorded yet, this device is least busy
 			return i
 		}
-		
+
 		// Calculate a weighted score based on activity and CPU usage
 		score := m.calculateLoadScore(deviceEntry)
-		
+
 		if score < low {
 			low = score
 			best = i
 		}
 	}
-	
+
 	return best
 }
 
@@ -74,14 +74,14 @@ func (m *deviceActivity) calculateLoadScore(entry *DeviceActivityEntry) int {
 	// Weight factors
 	activityWeight := 0.7
 	cpuWeight := 0.3
-	
+
 	// Normalize values (higher is worse)
 	normalizedActivity := float64(entry.CurrentActivity) / 100.0 // Assume 100 is max reasonable activity
 	normalizedCPU := entry.CPUUsagePercent / 100.0
-	
+
 	// Calculate weighted score (0-1000 scale)
 	score := int((activityWeight*normalizedActivity + cpuWeight*normalizedCPU) * 1000)
-	
+
 	return score
 }
 
@@ -89,7 +89,7 @@ func (m *deviceActivity) calculateLoadScore(entry *DeviceActivityEntry) int {
 func (m *deviceActivity) using(availability Availability) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	
+
 	entry, exists := m.act[availability.ID]
 	if !exists {
 		entry = &DeviceActivityEntry{
@@ -101,7 +101,7 @@ func (m *deviceActivity) using(availability Availability) {
 	} else {
 		entry.CurrentActivity++
 		entry.LastUpdate = time.Now()
-		
+
 		// Update moving average (simple exponential moving average)
 		alpha := 0.3 // Smoothing factor
 		entry.ActivityAverage = alpha*float64(entry.CurrentActivity) + (1-alpha)*entry.ActivityAverage
@@ -112,16 +112,16 @@ func (m *deviceActivity) using(availability Availability) {
 func (m *deviceActivity) done(availability Availability) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	
+
 	entry, exists := m.act[availability.ID]
 	if !exists {
 		return
 	}
-	
+
 	if entry.CurrentActivity > 0 {
 		entry.CurrentActivity--
 		entry.LastUpdate = time.Now()
-		
+
 		// Update moving average
 		alpha := 0.3 // Smoothing factor
 		entry.ActivityAverage = alpha*float64(entry.CurrentActivity) + (1-alpha)*entry.ActivityAverage
@@ -132,7 +132,7 @@ func (m *deviceActivity) done(availability Availability) {
 func (m *deviceActivity) updateCPUUsage(deviceID protocol.DeviceID, cpuPercent float64) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	
+
 	entry, exists := m.act[deviceID]
 	if !exists {
 		entry = &DeviceActivityEntry{
@@ -150,12 +150,12 @@ func (m *deviceActivity) updateCPUUsage(deviceID protocol.DeviceID, cpuPercent f
 func (m *deviceActivity) getLoadScore(deviceID protocol.DeviceID) int {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	
+
 	entry, exists := m.act[deviceID]
 	if !exists {
 		return 0 // No activity, lowest load
 	}
-	
+
 	return m.calculateLoadScore(entry)
 }
 
@@ -163,15 +163,15 @@ func (m *deviceActivity) getLoadScore(deviceID protocol.DeviceID) int {
 func (m *deviceActivity) getLeastActiveDevices(devices []protocol.DeviceID) []protocol.DeviceID {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	
+
 	// Create a slice of device-score pairs
 	type deviceScore struct {
 		deviceID protocol.DeviceID
 		score    int
 	}
-	
+
 	scores := make([]deviceScore, 0, len(devices))
-	
+
 	for _, deviceID := range devices {
 		entry, exists := m.act[deviceID]
 		score := 0
@@ -180,7 +180,7 @@ func (m *deviceActivity) getLeastActiveDevices(devices []protocol.DeviceID) []pr
 		}
 		scores = append(scores, deviceScore{deviceID, score})
 	}
-	
+
 	// Sort by score (ascending - lower scores are better)
 	for i := 0; i < len(scores)-1; i++ {
 		for j := i + 1; j < len(scores); j++ {
@@ -189,12 +189,12 @@ func (m *deviceActivity) getLeastActiveDevices(devices []protocol.DeviceID) []pr
 			}
 		}
 	}
-	
+
 	// Extract sorted device IDs
 	result := make([]protocol.DeviceID, len(scores))
 	for i, ds := range scores {
 		result[i] = ds.deviceID
 	}
-	
+
 	return result
 }

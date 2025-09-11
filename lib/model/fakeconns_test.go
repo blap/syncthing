@@ -157,6 +157,11 @@ func (f *fakeConnection) sendIndexUpdate() {
 	f.model.IndexUpdate(f, &protocol.IndexUpdate{Folder: f.folder, Files: toSend})
 }
 
+// GetPingLossRate returns the current ping packet loss rate as a percentage
+func (f *fakeConnection) GetPingLossRate() float64 {
+	return 0.0 // Default implementation for fake connection
+}
+
 func addFakeConn(m *testModel, dev protocol.DeviceID, folderID string) *fakeConnection {
 	fc := newFakeConnection(dev, m)
 	fc.folder = folderID

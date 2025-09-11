@@ -18,14 +18,14 @@ import (
 
 // EnhancedMockConnection is an enhanced mock connection that includes health monitoring capabilities
 type EnhancedMockConnection struct {
-	id           string
-	deviceID     protocol.DeviceID
-	priority     int
-	latency      time.Duration
-	closed       bool
-	closeError   error
-	established  time.Time
-	healthScore  float64
+	id            string
+	deviceID      protocol.DeviceID
+	priority      int
+	latency       time.Duration
+	closed        bool
+	closeError    error
+	established   time.Time
+	healthScore   float64
 	healthMonitor *HealthMonitor
 }
 
@@ -35,7 +35,7 @@ func NewEnhancedMockConnection(id string, deviceID protocol.DeviceID, priority i
 	cfg := config.New(protocol.EmptyDeviceID)
 	healthMonitor := NewHealthMonitor(config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil), deviceID.String())
 	healthMonitor.SetHealthScore(healthScore)
-	
+
 	return &EnhancedMockConnection{
 		id:            id,
 		deviceID:      deviceID,
@@ -151,17 +151,30 @@ func (m *EnhancedMockConnection) ConnectionID() string {
 
 // Add all the required methods to satisfy the protocol.Connection interface
 func (m *EnhancedMockConnection) Index(ctx context.Context, idx *protocol.Index) error { return nil }
-func (m *EnhancedMockConnection) IndexUpdate(ctx context.Context, idxUp *protocol.IndexUpdate) error { return nil }
-func (m *EnhancedMockConnection) Request(ctx context.Context, req *protocol.Request) ([]byte, error) { return nil, nil }
-func (m *EnhancedMockConnection) ClusterConfig(config *protocol.ClusterConfig, passwords map[string]string) {}
-func (m *EnhancedMockConnection) DownloadProgress(ctx context.Context, dp *protocol.DownloadProgress) {}
-func (m *EnhancedMockConnection) Start() {}
-func (m *EnhancedMockConnection) Statistics() protocol.Statistics { return protocol.Statistics{} }
+
+func (m *EnhancedMockConnection) IndexUpdate(ctx context.Context, idxUp *protocol.IndexUpdate) error {
+	return nil
+}
+
+func (m *EnhancedMockConnection) Request(ctx context.Context, req *protocol.Request) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *EnhancedMockConnection) ClusterConfig(config *protocol.ClusterConfig, passwords map[string]string) {
+}
+
+func (m *EnhancedMockConnection) DownloadProgress(ctx context.Context, dp *protocol.DownloadProgress) {
+}
+func (m *EnhancedMockConnection) Start()                                  {}
+func (m *EnhancedMockConnection) Statistics() protocol.Statistics         { return protocol.Statistics{} }
 func (m *EnhancedMockConnection) ConnectionInfo() protocol.ConnectionInfo { return m }
-func (m *EnhancedMockConnection) Type() string { return "mock" }
-func (m *EnhancedMockConnection) Transport() string { return "mock" }
-func (m *EnhancedMockConnection) IsLocal() bool { return false }
-func (m *EnhancedMockConnection) RemoteAddr() net.Addr { return nil }
-func (m *EnhancedMockConnection) String() string { return fmt.Sprintf("enhanced-mock-connection-%s", m.id) }
-func (m *EnhancedMockConnection) Crypto() string { return "mock" }
+func (m *EnhancedMockConnection) Type() string                            { return "mock" }
+func (m *EnhancedMockConnection) Transport() string                       { return "mock" }
+func (m *EnhancedMockConnection) IsLocal() bool                           { return false }
+func (m *EnhancedMockConnection) RemoteAddr() net.Addr                    { return nil }
+func (m *EnhancedMockConnection) String() string {
+	return fmt.Sprintf("enhanced-mock-connection-%s", m.id)
+}
+func (m *EnhancedMockConnection) Crypto() string           { return "mock" }
 func (m *EnhancedMockConnection) EstablishedAt() time.Time { return m.established }
+func (m *EnhancedMockConnection) GetPingLossRate() float64 { return 0.0 }

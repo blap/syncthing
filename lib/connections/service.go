@@ -79,7 +79,6 @@ const (
 	minConnectionLoopSleep        = 5 * time.Second
 	stdConnectionLoopSleep        = time.Minute
 	worstDialerPriority           = math.MaxInt32
-	recentlySeenCutoff            = 7 * 24 * time.Hour
 	shortLivedConnectionThreshold = 5 * time.Second
 	dialMaxParallel               = 64
 	dialMaxParallelPerDevice      = 8
@@ -131,9 +130,10 @@ type Service interface {
 	ListenerStatus() map[string]ListenerStatusEntry
 	ConnectionStatus() map[string]ConnectionStatusEntry
 	NATType() string
-	PacketScheduler() *PacketScheduler
 	GetConnectedDevices() []protocol.DeviceID
 	GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol.Connection
+	PacketScheduler() *PacketScheduler
+	DialNow() // Add this method to trigger immediate dialing
 }
 
 type ListenerStatusEntry struct {
@@ -176,6 +176,9 @@ type service struct {
 	keyGen               *protocol.KeyGenerator
 	lanChecker           *lanChecker
 
+	packetScheduler      *PacketScheduler
+	metricsTracker       *ConnectionMetricsTracker
+
 	dialNow           chan struct{}
 	dialNowDevices    map[protocol.DeviceID]struct{}
 	dialNowDevicesMut sync.Mutex
@@ -183,8 +186,6 @@ type service struct {
 	listenersMut   sync.RWMutex
 	listeners      map[string]genericListener
 	listenerTokens map[string]suture.ServiceToken
-
-	packetScheduler *PacketScheduler
 }
 
 func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *tls.Config, discoverer discover.Finder, bepProtocolName string, tlsDefaultCommonName string, evLogger events.Logger, registry *registry.Registry, keyGen *protocol.KeyGenerator) Service {
@@ -208,14 +209,14 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 		registry:             registry,
 		keyGen:               keyGen,
 		lanChecker:           &lanChecker{cfg},
+		packetScheduler:      NewPacketScheduler(),
+		metricsTracker:       NewConnectionMetricsTracker(),
 
 		dialNow:        make(chan struct{}, 1),
 		dialNowDevices: make(map[protocol.DeviceID]struct{}),
 
 		listeners:      make(map[string]genericListener),
 		listenerTokens: make(map[string]suture.ServiceToken),
-
-		packetScheduler: NewPacketScheduler(),
 	}
 	cfg.Subscribe(service)
 
@@ -351,6 +352,9 @@ func (s *service) connectionCheckEarly(remoteID protocol.DeviceID, c internalCon
 	currentConns := s.numConnectionsForDevice(cfg.DeviceID)
 	desiredConns := s.desiredConnectionsToDevice(cfg.DeviceID)
 	worstPrio := s.worstConnectionPriority(remoteID)
+	
+	// Consistent logic: we only reject if we already have desired connections
+	// and this connection's priority plus upgrade threshold is not better than worst priority
 	ourUpgradeThreshold := c.priority + s.cfg.Options().ConnectionPriorityUpgradeThreshold
 	if currentConns >= desiredConns && ourUpgradeThreshold >= worstPrio {
 		l.Debugf("Not accepting connection to %s at %s: already have %d connections, desire %d", remoteID, c, currentConns, desiredConns)
@@ -381,10 +385,18 @@ func (s *service) handleHellos(ctx context.Context) error {
 
 		if err != nil {
 			if protocol.IsVersionMismatch(err) {
-				slog.WarnContext(ctx, "Remote device is too old", remoteID.LogAttr(), slogutil.Address(c.RemoteAddr()), slogutil.Error(err))
+				slog.WarnContext(ctx, "Remote device is too old", 
+					remoteID.LogAttr(), 
+					slogutil.Address(c.RemoteAddr()), 
+					slogutil.Error(err),
+					"errorType", fmt.Sprintf("%T", err))
 			} else {
 				// It's something else - connection reset or whatever
-				slog.WarnContext(ctx, "Failed to exchange Hello messages", remoteID.LogAttr(), slogutil.Address(c.RemoteAddr()), slogutil.Error(err))
+				slog.WarnContext(ctx, "Failed to exchange Hello messages", 
+					remoteID.LogAttr(), 
+					slogutil.Address(c.RemoteAddr()), 
+					slogutil.Error(err),
+					"errorType", fmt.Sprintf("%T", err))
 			}
 			c.Close()
 			continue
@@ -394,14 +406,22 @@ func (s *service) handleHellos(ctx context.Context) error {
 		// The Model will return an error for devices that we don't want to
 		// have a connection with for whatever reason, for example unknown devices.
 		if err := s.model.OnHello(remoteID, c.RemoteAddr(), hello); err != nil {
-			slog.WarnContext(ctx, "Connection rejected", remoteID.LogAttr(), slogutil.Address(c.RemoteAddr()), slog.Any("type", c.Type()), slogutil.Error(err))
+			slog.WarnContext(ctx, "Connection rejected", 
+				remoteID.LogAttr(), 
+				slogutil.Address(c.RemoteAddr()), 
+				slog.Any("type", c.Type()), 
+				slogutil.Error(err),
+				"errorType", fmt.Sprintf("%T", err))
 			c.Close()
 			continue
 		}
 
 		deviceCfg, ok := s.cfg.Device(remoteID)
 		if !ok {
-			slog.WarnContext(ctx, "Device removed from config during connection attempt", remoteID.LogAttr(), slogutil.Address(c.RemoteAddr()))
+			slog.WarnContext(ctx, "Device removed from config during connection attempt", 
+				remoteID.LogAttr(), 
+				slogutil.Address(c.RemoteAddr()),
+				"connectionType", c.Type())
 			c.Close()
 			continue
 		}
@@ -421,7 +441,12 @@ func (s *service) handleHellos(ctx context.Context) error {
 			// Incorrect certificate name is something the user most
 			// likely wants to know about, since it's an advanced
 			// config. Warn instead of Info.
-			slog.ErrorContext(ctx, "Bad certificate from remote", remoteID.LogAttr(), slogutil.Address(c.RemoteAddr()), slogutil.Error(err))
+			slog.ErrorContext(ctx, "Bad certificate from remote", 
+				remoteID.LogAttr(), 
+				slogutil.Address(c.RemoteAddr()), 
+				slogutil.Error(err),
+				"expectedName", certName,
+				"actualName", remoteCert.Subject.CommonName)
 			c.Close()
 			continue
 		}
@@ -432,10 +457,10 @@ func (s *service) handleHellos(ctx context.Context) error {
 		rd, wr := s.limiter.getLimiters(remoteID, c, c.IsLocal())
 
 		protoConn := protocol.NewConnection(remoteID, rd, wr, c, s.model, c, deviceCfg.Compression.ToProtocol(), s.keyGen)
-		s.accountAddedConnection(protoConn, hello, s.cfg.Options().ConnectionPriorityUpgradeThreshold)
+		s.accountAddedConnection(protoConn, hello, s.cfg.Options().ConnectionPriorityUpgradeThreshold, s.cfg)
 		go func() {
 			<-protoConn.Closed()
-			s.accountRemovedConnection(protoConn)
+			s.accountRemovedConnection(protoConn, s.cfg)
 			s.dialNowDevicesMut.Lock()
 			s.dialNowDevices[remoteID] = struct{}{}
 			s.scheduleDialNow()
@@ -464,9 +489,13 @@ func (s *service) connect(ctx context.Context) error {
 		bestDialerPriority := s.bestDialerPriority(cfg)
 		isInitialRampup := initialRampup < stdConnectionLoopSleep
 
-		slog.DebugContext(ctx, "Connection loop")
+		slog.DebugContext(ctx, "Connection loop", 
+			"devicesConfigured", len(cfg.Devices),
+			"connectionLimitMax", cfg.Options.ConnectionLimitMax,
+			"connectionLimitEnough", cfg.Options.ConnectionLimitEnough)
 		if isInitialRampup {
-			slog.DebugContext(ctx, "Connection loop in initial rampup")
+			slog.DebugContext(ctx, "Connection loop in initial rampup", 
+				"rampupDuration", initialRampup)
 		}
 
 		// Used for consistency throughout this loop run, as time passes
@@ -535,14 +564,22 @@ func (s *service) dialDevices(ctx context.Context, now time.Time, cfg config.Con
 	// point in resolving devices and such at all.
 	allowAdditional := 0 // no limit
 	connectionLimit := cfg.Options.LowestConnectionLimit()
+	currentDevices := s.numConnectedDevices()
 	if connectionLimit > 0 {
-		current := s.numConnectedDevices()
-		allowAdditional = connectionLimit - current
+		allowAdditional = connectionLimit - currentDevices
 		if allowAdditional <= 0 {
-			l.Debugf("Skipping dial because we've reached the connection limit, current %d >= limit %d", current, connectionLimit)
+			slog.DebugContext(ctx, "Skipping dial because we've reached the connection limit", 
+				"currentDevices", currentDevices, 
+				"connectionLimit", connectionLimit)
 			return
 		}
 	}
+
+	slog.DebugContext(ctx, "Starting dial devices process", 
+		"configuredDevices", len(cfg.Devices),
+		"currentDevices", currentDevices,
+		"allowAdditional", allowAdditional,
+		"bestDialerPriority", bestDialerPriority)
 
 	// Get device statistics for the last seen time of each device. This
 	// isn't critical, so ignore the potential error.
@@ -560,28 +597,50 @@ func (s *service) dialDevices(ctx context.Context, now time.Time, cfg config.Con
 			continue
 		}
 
+		slog.DebugContext(ctx, "Processing device for connection", 
+			"device", deviceCfg.DeviceID,
+			"deviceName", deviceCfg.Name,
+			"addresses", deviceCfg.Addresses)
+
 		// See if we are already connected and, if so, what our cutoff is
 		// for dialer priority.
 		priorityCutoff := worstDialerPriority
-		if currentConns := s.numConnectionsForDevice(deviceCfg.DeviceID); currentConns > 0 {
+		currentConns := s.numConnectionsForDevice(deviceCfg.DeviceID)
+		if currentConns > 0 {
 			// Set the priority cutoff to the current connection's priority,
 			// so that we don't attempt any dialers with worse priority.
 			priorityCutoff = s.worstConnectionPriority(deviceCfg.DeviceID)
 
-			// Reduce the priority cutoff by the upgrade threshold, so that
-			// we don't attempt dialers that aren't considered a worthy upgrade.
-			priorityCutoff -= cfg.Options.ConnectionPriorityUpgradeThreshold
+			// Apply upgrade threshold consistently with connectionCheckEarly
+			// We want to dial if our best dialer can provide a connection that's
+			// better than what we have (considering the upgrade threshold)
+			priorityCutoff += cfg.Options.ConnectionPriorityUpgradeThreshold
+
+			slog.DebugContext(ctx, "Device already has connections", 
+				"device", deviceCfg.DeviceID,
+				"currentConnections", currentConns,
+				"desiredConnections", s.desiredConnectionsToDevice(deviceCfg.DeviceID),
+				"priorityCutoff", priorityCutoff,
+				"bestDialerPriority", bestDialerPriority)
 
 			if bestDialerPriority >= priorityCutoff && currentConns >= s.desiredConnectionsToDevice(deviceCfg.DeviceID) {
 				// Our best dialer is not any better than what we already
 				// have, and we already have the desired number of
 				// connections to this device,so nothing to do here.
-				l.Debugf("Skipping dial to %s because we already have %d connections and our best dialer is not better than %d", deviceCfg.DeviceID.Short(), currentConns, priorityCutoff)
+				slog.DebugContext(ctx, "Skipping dial to device", 
+					"device", deviceCfg.DeviceID,
+					"reason", "already have desired connections and best dialer is not better",
+					"currentConnections", currentConns,
+					"priorityCutoff", priorityCutoff,
+					"bestDialerPriority", bestDialerPriority)
 				continue
 			}
 		}
 
 		dialTargets := s.resolveDialTargets(ctx, now, cfg, deviceCfg, nextDialAt, initial, priorityCutoff)
+		slog.DebugContext(ctx, "Resolved dial targets for device", 
+			"device", deviceCfg.DeviceID,
+			"numTargets", len(dialTargets))
 		if len(dialTargets) > 0 {
 			queue = append(queue, dialQueueEntry{
 				id:         deviceCfg.DeviceID,
@@ -589,6 +648,9 @@ func (s *service) dialDevices(ctx context.Context, now time.Time, cfg config.Con
 				shortLived: stats[deviceCfg.DeviceID].LastConnectionDurationS < shortLivedConnectionThreshold.Seconds(),
 				targets:    dialTargets,
 			})
+		} else {
+			slog.DebugContext(ctx, "No dial targets for device", 
+				"device", deviceCfg.DeviceID)
 		}
 	}
 
@@ -599,6 +661,9 @@ func (s *service) dialDevices(ctx context.Context, now time.Time, cfg config.Con
 	// quicker if only a subset of configured devices are actually reachable
 	// (by prioritizing those that were reachable recently).
 	queue.Sort()
+
+	slog.DebugContext(ctx, "Dial queue sorted", 
+		"queueLength", len(queue))
 
 	// Perform dials according to the queue, stopping when we've reached the
 	// allowed additional number of connections (if limited).
@@ -622,8 +687,13 @@ func (s *service) dialDevices(ctx context.Context, now time.Time, cfg config.Con
 			defer dialWG.Done()
 			conn, ok := s.dialParallel(dialCtx, entry.id, entry.targets, dialSemaphore)
 			if !ok {
+				slog.DebugContext(ctx, "Failed to dial device", 
+					"device", entry.id)
 				return
 			}
+			slog.DebugContext(ctx, "Successfully dialed device", 
+					"device", entry.id,
+					"connection", conn)
 			numConnsMut.Lock()
 			if allowAdditional == 0 || numConns < allowAdditional {
 				select {
@@ -644,7 +714,10 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 	deviceID := deviceCfg.DeviceID
 
 	addrs := s.resolveDeviceAddrs(ctx, deviceCfg)
-	l.Debugln("Resolved device", deviceID.Short(), "addresses:", addrs)
+	slog.DebugContext(ctx, "Resolved device addresses", 
+		"device", deviceID,
+		"addresses", addrs,
+		"numAddresses", len(addrs))
 
 	dialTargets := make([]dialTarget, 0, len(addrs))
 	for _, addr := range addrs {
@@ -659,11 +732,26 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 		// retry in a minute
 		nextDialAt.set(deviceID, addr, now.Add(time.Minute))
 
+		// Check if the address is a raw host:port string (likely a relay address)
+		// and add the relay:// scheme prefix if needed
 		uri, err := url.Parse(addr)
 		if err != nil {
-			s.setConnectionStatus(addr, err)
-			slog.WarnContext(ctx, "Failed to parse dialer address", slogutil.Address(addr), slogutil.Error(err))
-			continue
+			// If parsing fails, it might be a raw host:port string
+			// Try to parse it as a relay address
+			if _, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+				// It's a valid host:port combination, try parsing with relay:// prefix
+				uri, err = url.Parse("relay://" + addr)
+				if err != nil {
+					s.setConnectionStatus(addr, err)
+					slog.WarnContext(ctx, "Failed to parse dialer address", slogutil.Address(addr), slogutil.Error(err))
+					continue
+				}
+			} else {
+				// Not a valid host:port combination either, report the original error
+				s.setConnectionStatus(addr, err)
+				slog.WarnContext(ctx, "Failed to parse dialer address", slogutil.Address(addr), slogutil.Error(err))
+				continue
+			}
 		}
 
 		if len(deviceCfg.AllowedNetworks) > 0 {
@@ -703,6 +791,14 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 		}
 
 		nextDialAt.set(deviceID, addr, now.Add(dialer.RedialFrequency()))
+
+			slog.DebugContext(ctx, "Adding dial target", 
+				"device", deviceID,
+				"address", addr,
+				"priority", priority,
+				"dialerType", fmt.Sprintf("%T", dialer),
+				"currentConnections", currentConns,
+				"desiredConnections", s.desiredConnectionsToDevice(deviceCfg.DeviceID))
 
 		dialTargets = append(dialTargets, dialTarget{
 			addr:     addr,
@@ -934,23 +1030,6 @@ func (s *service) scheduleDialNow() {
 	}
 }
 
-// PacketScheduler returns the packet scheduler for multipath connections
-func (s *service) PacketScheduler() *PacketScheduler {
-	return s.packetScheduler
-}
-
-// GetConnectedDevices returns a list of all currently connected devices
-func (s *service) GetConnectedDevices() []protocol.DeviceID {
-	// TODO: Implement this method
-	return nil
-}
-
-// GetConnectionsForDevice returns all connections for a specific device
-func (s *service) GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol.Connection {
-	// TODO: Implement this method
-	return nil
-}
-
 func (s *service) AllAddresses() []string {
 	s.listenersMut.RLock()
 	var addrs []string
@@ -999,6 +1078,35 @@ func (s *service) ListenerStatus() map[string]ListenerStatusEntry {
 	}
 	s.listenersMut.RUnlock()
 	return result
+}
+
+// GetConnectedDevices returns a list of connected device IDs
+func (s *service) GetConnectedDevices() []protocol.DeviceID {
+	s.connectionsMut.Lock()
+	defer s.connectionsMut.Unlock()
+	
+	// Get all device IDs that have active connections
+	devices := make([]protocol.DeviceID, 0, len(s.connections))
+	for deviceID := range s.connections {
+		devices = append(devices, deviceID)
+	}
+	return devices
+}
+
+// GetConnectionsForDevice returns all connections for a specific device
+func (s *service) GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol.Connection {
+	s.connectionsMut.Lock()
+	defer s.connectionsMut.Unlock()
+	
+	// Return all connections for the specified device
+	if connections, ok := s.connections[deviceID]; ok {
+		// Create a copy of the connections slice to avoid external modification
+		result := make([]protocol.Connection, len(connections))
+		copy(result, connections)
+		return result
+	}
+	
+	return nil
 }
 
 type connectionStatusHandler struct {
@@ -1135,6 +1243,24 @@ func (s *service) dialParallel(ctx context.Context, deviceID protocol.DeviceID, 
 	slices.Sort(priorities)
 
 	sema := semaphore.MultiSemaphore{semaphore.New(dialMaxParallelPerDevice), parentSema}
+	
+	// Track all connections that need to be cleaned up in error cases
+	var allConns []internalConn
+	var allConnsMut sync.Mutex
+	
+	// Only close connections if we don't return successfully
+	connectionsShouldBeClosed := true
+	defer func() {
+		if connectionsShouldBeClosed {
+			// Ensure all connections are closed in case of errors
+			allConnsMut.Lock()
+			defer allConnsMut.Unlock()
+			for _, conn := range allConns {
+				conn.Close()
+			}
+		}
+	}()
+
 	for _, prio := range priorities {
 		tgts := dialTargetBuckets[prio]
 		res := make(chan internalConn, len(tgts))
@@ -1149,8 +1275,25 @@ func (s *service) dialParallel(ctx context.Context, deviceID protocol.DeviceID, 
 				}()
 				conn, err := tgt.Dial(ctx)
 				if err == nil {
+					// Add to tracking list before validation
+					allConnsMut.Lock()
+					allConns = append(allConns, conn)
+					allConnsMut.Unlock()
+					
 					// Closes the connection on error
 					err = s.validateIdentity(conn, deviceID)
+					if err != nil {
+						// If validation failed, remove from tracking list as it will be closed by validateIdentity
+						allConnsMut.Lock()
+						for i, c := range allConns {
+							if c == conn {
+								// Remove this connection from the cleanup list
+								allConns = append(allConns[:i], allConns[i+1:]...)
+								break
+							}
+						}
+						allConnsMut.Unlock()
+					}
 				}
 				s.setConnectionStatus(tgt.addr, err)
 				if err != nil {
@@ -1174,6 +1317,21 @@ func (s *service) dialParallel(ctx context.Context, deviceID protocol.DeviceID, 
 			// Got a connection, means more might come back, hence spawn a
 			// routine that will do the discarding.
 			l.Debugln("connected to", deviceID, prio, "using", conn, conn.priority)
+			
+			// Mark that we should not close connections in defer
+			connectionsShouldBeClosed = false
+			
+			// Remove the successful connection from the cleanup list
+			allConnsMut.Lock()
+			remainingConns := make([]internalConn, 0, len(allConns)-1)
+			for _, c := range allConns {
+				if c != conn {
+					remainingConns = append(remainingConns, c)
+				}
+			}
+			allConns = remainingConns
+			allConnsMut.Unlock()
+			
 			go func(deviceID protocol.DeviceID, prio int) {
 				wg.Wait()
 				l.Debugln("discarding", len(res), "connections while connecting to", deviceID, prio)
@@ -1346,18 +1504,26 @@ func (s *service) desiredConnectionsToDevice(deviceID protocol.DeviceID) int {
 // connected to and how many connections we have to each device. It also
 // tracks how many connections they are willing to use.
 type deviceConnectionTracker struct {
-	connectionsMut  sync.Mutex
-	connections     map[protocol.DeviceID][]protocol.Connection // current connections
-	wantConnections map[protocol.DeviceID]int                   // number of connections they want
+	connectionsMut    sync.Mutex
+	connections       map[protocol.DeviceID][]protocol.Connection // current connections
+	wantConnections   map[protocol.DeviceID]int                   // number of connections they want
+	stabilityMgrs     map[protocol.DeviceID]*ConnectionStabilityManager // connection stability managers
+	hysteresisCtrls   map[protocol.DeviceID]*HysteresisController // hysteresis controllers
+	convergenceMgrs   map[protocol.DeviceID]*ConvergenceManager   // convergence managers
+	connectionPrioritizer *ConnectionPrioritizer                // connection prioritizer
 }
 
-func (c *deviceConnectionTracker) accountAddedConnection(conn protocol.Connection, h protocol.Hello, upgradeThreshold int) {
+func (c *deviceConnectionTracker) accountAddedConnection(conn protocol.Connection, h protocol.Hello, upgradeThreshold int, cfg config.Wrapper) {
 	c.connectionsMut.Lock()
 	defer c.connectionsMut.Unlock()
 	// Lazily initialize the maps
 	if c.connections == nil {
 		c.connections = make(map[protocol.DeviceID][]protocol.Connection)
 		c.wantConnections = make(map[protocol.DeviceID]int)
+		c.stabilityMgrs = make(map[protocol.DeviceID]*ConnectionStabilityManager)
+		c.hysteresisCtrls = make(map[protocol.DeviceID]*HysteresisController)
+		c.convergenceMgrs = make(map[protocol.DeviceID]*ConvergenceManager)
+		c.connectionPrioritizer = NewConnectionPrioritizer(cfg)
 	}
 	// Add the connection to the list of current connections and remember
 	// how many total connections they want
@@ -1366,14 +1532,33 @@ func (c *deviceConnectionTracker) accountAddedConnection(conn protocol.Connectio
 	c.wantConnections[d] = int(h.NumConnections)
 	l.Debugf("Added connection for %s (now %d), they want %d connections", d.Short(), len(c.connections[d]), h.NumConnections)
 
+	// Initialize stability manager if needed
+	if c.stabilityMgrs[d] == nil {
+		c.stabilityMgrs[d] = NewConnectionStabilityManager(cfg, d)
+	}
+	c.stabilityMgrs[d].RecordConnectionEstablished(conn)
+
+	// Initialize hysteresis controller if needed
+	if c.hysteresisCtrls[d] == nil {
+		c.hysteresisCtrls[d] = NewHysteresisController(cfg, d)
+	}
+
+	// Initialize convergence manager if needed
+	if c.convergenceMgrs[d] == nil {
+		c.convergenceMgrs[d] = NewConvergenceManager(cfg, d)
+	}
+	c.convergenceMgrs[d].UpdateConnectionScore(conn)
+
 	// Update active connections metric
 	metricDeviceActiveConnections.WithLabelValues(d.String()).Inc()
 
 	// Close any connections we no longer want to retain.
-	c.closeWorsePriorityConnectionsLocked(d, conn.Priority()-upgradeThreshold)
+	c.closeWorsePriorityConnectionsLocked(d, conn.Priority()-upgradeThreshold, cfg)
 }
 
-func (c *deviceConnectionTracker) accountRemovedConnection(conn protocol.Connection) {
+func (c *deviceConnectionTracker) accountRemovedConnection(conn protocol.Connection, cfg config.Wrapper) {
+	// The cfg parameter is currently unused but kept for API consistency with accountAddedConnection
+	_ = cfg
 	c.connectionsMut.Lock()
 	defer c.connectionsMut.Unlock()
 	d := conn.DeviceID()
@@ -1389,6 +1574,10 @@ func (c *deviceConnectionTracker) accountRemovedConnection(conn protocol.Connect
 	if len(c.connections[d]) == 0 {
 		delete(c.connections, d)
 		delete(c.wantConnections, d)
+		delete(c.stabilityMgrs, d)
+	} else if mgr, exists := c.stabilityMgrs[d]; exists {
+		// Record connection closure
+		mgr.RecordConnectionClosed(conn, "connection closed")
 	}
 
 	// Update active connections metric
@@ -1433,12 +1622,107 @@ func (c *deviceConnectionTracker) worstConnectionPriority(d protocol.DeviceID) i
 // closeWorsePriorityConnectionsLocked closes all connections to the given
 // device that are worse than the cutoff priority. Must be called with the
 // lock held.
-func (c *deviceConnectionTracker) closeWorsePriorityConnectionsLocked(d protocol.DeviceID, cutoff int) {
+func (c *deviceConnectionTracker) closeWorsePriorityConnectionsLocked(d protocol.DeviceID, cutoff int, cfg config.Wrapper) {
+	// Collect connections to close while holding the lock
+	var connsToClose []protocol.Connection
 	for _, conn := range c.connections[d] {
 		if p := conn.Priority(); p > cutoff {
-			l.Debugf("Closing connection %s to %s with priority %d (cutoff %d)", conn, d.Short(), p, cutoff)
-			go conn.Close(errReplacingConnection)
+			// Check if we should close this connection based on comprehensive metrics
+			shouldClose := true
+			
+			// Use the new connection prioritizer for better decision making
+			if c.connectionPrioritizer != nil {
+				// Find the best existing connection to compare against
+				var bestExistingConn protocol.Connection
+				for _, existingConn := range c.connections[d] {
+					if existingConn.ConnectionID() != conn.ConnectionID() {
+						if bestExistingConn == nil || c.connectionPrioritizer.CompareConnections(bestExistingConn, existingConn) {
+							bestExistingConn = existingConn
+						}
+					}
+				}
+				
+				// If we have a best existing connection, compare with the new one
+				if bestExistingConn != nil {
+					// Use the prioritizer to determine if we should replace
+					shouldClose = c.connectionPrioritizer.ShouldReplaceConnection(bestExistingConn, conn, cfg.Options().ConnectionPriorityUpgradeThreshold)
+					if !shouldClose {
+						l.Debugf("Connection prioritizer keeping connection %s to %s (score comparison)", conn, d.Short())
+					}
+				}
+			} else {
+				// Fallback to existing logic if prioritizer is not available
+				if mgr, exists := c.stabilityMgrs[d]; exists {
+					// If the existing connection is stable and the new one isn't significantly better,
+					// consider keeping it to prevent churn
+					if mgr.IsConnectionStable(conn) {
+						// For stable connections, require a bigger priority difference to replace
+						stabilityAdjustedCutoff := cutoff + cfg.Options().ConnectionReplacementPriorityThreshold
+						if p <= stabilityAdjustedCutoff {
+							shouldClose = false
+							l.Debugf("Keeping stable connection %s to %s with priority %d (adjusted cutoff %d)", conn, d.Short(), p, stabilityAdjustedCutoff)
+						}
+					}
+				}
+				
+				// Apply hysteresis to prevent rapid switching
+				if shouldClose && c.hysteresisCtrls[d] != nil {
+					// Get the best current connection to compare against
+					var bestCurrentConn protocol.Connection
+					for _, existingConn := range c.connections[d] {
+						if existingConn.ConnectionID() != conn.ConnectionID() {
+							if bestCurrentConn == nil || existingConn.Priority() < bestCurrentConn.Priority() {
+								bestCurrentConn = existingConn
+							}
+						}
+					}
+					
+					// Check if hysteresis prevents switching
+					if bestCurrentConn != nil && !c.hysteresisCtrls[d].ShouldSwitchConnection(bestCurrentConn, conn) {
+						shouldClose = false
+						l.Debugf("Hysteresis preventing switch from %s to %s for device %s", bestCurrentConn, conn, d.Short())
+					}
+				}
+			}
+			
+			// Apply convergence algorithms for multipath management
+			if shouldClose && c.convergenceMgrs[d] != nil && cfg.Options().MultipathEnabled {
+				// Evaluate convergence state
+				result := c.convergenceMgrs[d].EvaluateConvergence(c.connections[d])
+				
+				// If we're in a stable state, be more conservative about closing connections
+				if result.State == ConvergenceStateStable {
+					// Check if convergence manager suggests keeping this connection
+					shouldKeep := false
+					for _, activeConn := range result.ActiveConnections {
+						if activeConn == conn.ConnectionID() {
+							shouldKeep = true
+							break
+						}
+					}
+					
+					if shouldKeep {
+						shouldClose = false
+						l.Debugf("Convergence manager keeping connection %s for device %s", conn, d.Short())
+					}
+				}
+			}
+			
+			if shouldClose {
+				l.Debugf("Marking connection %s to %s with priority %d (cutoff %d) for closing", conn, d.Short(), p, cutoff)
+				connsToClose = append(connsToClose, conn)
+			}
 		}
+	}
+	
+	// Close connections asynchronously outside the critical section
+	// to avoid holding the lock during potentially blocking Close operations
+	if len(connsToClose) > 0 {
+		go func() {
+			for _, conn := range connsToClose {
+				conn.Close(errReplacingConnection)
+			}
+		}()
 	}
 }
 
@@ -1460,4 +1744,35 @@ func newConnectionID(t0, t1 int64) string {
 	// character in the middle that is a mix of bits from the timestamp and
 	// from the random. We want the timestamp part deterministic.
 	return enc.EncodeToString(buf[:8]) + enc.EncodeToString(buf[8:])
+}
+
+// PacketScheduler returns the packet scheduler for the service
+func (s *service) PacketScheduler() *PacketScheduler {
+	return s.packetScheduler
+}
+
+// DialNow triggers immediate dialing of all configured devices
+func (s *service) DialNow() {
+	// Add all configured devices to dialNowDevices
+	cfg := s.cfg.RawCopy()
+	s.dialNowDevicesMut.Lock()
+	count := 0
+	for _, deviceCfg := range cfg.Devices {
+		if deviceCfg.DeviceID != s.myID && !deviceCfg.Paused {
+			s.dialNowDevices[deviceCfg.DeviceID] = struct{}{}
+			count++
+		}
+	}
+	s.dialNowDevicesMut.Unlock()
+	
+	slog.Debug("DialNow triggered", "devicesToAdd", count)
+	
+	// Trigger the dialing loop
+	select {
+	case s.dialNow <- struct{}{}:
+		slog.Debug("DialNow signal sent")
+	default:
+		// Channel is full, which is fine - a dial is already scheduled
+		slog.Debug("DialNow signal not sent - channel full")
+	}
 }

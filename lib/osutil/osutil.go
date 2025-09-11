@@ -109,12 +109,12 @@ func withPreparedTarget(filesystem fs.Filesystem, from, to string, f func() erro
 func copyFileContents(method fs.CopyRangeMethod, srcFs, dstFs fs.Filesystem, src, dst string) (err error) {
 	in, err := srcFs.Open(src)
 	if err != nil {
-		return
+		return err
 	}
 	defer in.Close()
 	out, err := dstFs.Create(dst)
 	if err != nil {
-		return
+		return err
 	}
 	defer func() {
 		cerr := out.Close()
@@ -124,10 +124,10 @@ func copyFileContents(method fs.CopyRangeMethod, srcFs, dstFs fs.Filesystem, src
 	}()
 	inFi, err := in.Stat()
 	if err != nil {
-		return
+		return err
 	}
 	err = fs.CopyRange(method, in, out, 0, 0, inFi.Size())
-	return
+	return err
 }
 
 func IsDeleted(ffs fs.Filesystem, name string) bool {

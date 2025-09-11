@@ -64,7 +64,7 @@ func uploadPanicLog(ctx context.Context, urlBase, file string) error {
 
 	// Create crash reporting client with improved error handling
 	client := crashreporting.NewClient(urlBase)
-	
+
 	// Report crash with robust error handling and retry logic
 	return client.ReportCrash(ctx, data)
 }

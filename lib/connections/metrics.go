@@ -47,7 +47,7 @@ var (
 		Name:      "pool_expired_total",
 		Help:      "Total number of connections that expired from pools.",
 	}, []string{"device"})
-	
+
 	metricConnectionMigrationCount = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "syncthing",
 		Subsystem: "connections",

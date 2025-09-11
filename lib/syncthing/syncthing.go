@@ -43,8 +43,8 @@ import (
 )
 
 const (
-	bepProtocolName        = "bep/1.0"
-	tlsDefaultCommonName   = "syncthing"
+	bepProtocolName      = "bep/1.0"
+	tlsDefaultCommonName = "syncthing"
 
 	deviceCertLifetimeDays = 20 * 365
 )
@@ -258,7 +258,7 @@ func (a *App) startup() error {
 
 	// Create the model first, before creating the connection service
 	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen, discoveryManager)
-	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, nil, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
+	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
 
 	// Now we can properly set the connections service in the discovery manager
 	discoveryManager.SetConnectionsService(connectionsService)

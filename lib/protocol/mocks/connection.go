@@ -78,6 +78,16 @@ type Connection struct {
 	establishedAtReturnsOnCall map[int]struct {
 		result1 time.Time
 	}
+	GetPingLossRateStub        func() float64
+	getPingLossRateMutex       sync.RWMutex
+	getPingLossRateArgsForCall []struct {
+	}
+	getPingLossRateReturns struct {
+		result1 float64
+	}
+	getPingLossRateReturnsOnCall map[int]struct {
+		result1 float64
+	}
 	IndexStub        func(context.Context, *protocol.Index) error
 	indexMutex       sync.RWMutex
 	indexArgsForCall []struct {
@@ -554,6 +564,59 @@ func (fake *Connection) EstablishedAtReturnsOnCall(i int, result1 time.Time) {
 	}
 	fake.establishedAtReturnsOnCall[i] = struct {
 		result1 time.Time
+	}{result1}
+}
+
+func (fake *Connection) GetPingLossRate() float64 {
+	fake.getPingLossRateMutex.Lock()
+	ret, specificReturn := fake.getPingLossRateReturnsOnCall[len(fake.getPingLossRateArgsForCall)]
+	fake.getPingLossRateArgsForCall = append(fake.getPingLossRateArgsForCall, struct {
+	}{})
+	stub := fake.GetPingLossRateStub
+	fakeReturns := fake.getPingLossRateReturns
+	fake.recordInvocation("GetPingLossRate", []interface{}{})
+	fake.getPingLossRateMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Connection) GetPingLossRateCallCount() int {
+	fake.getPingLossRateMutex.RLock()
+	defer fake.getPingLossRateMutex.RUnlock()
+	return len(fake.getPingLossRateArgsForCall)
+}
+
+func (fake *Connection) GetPingLossRateCalls(stub func() float64) {
+	fake.getPingLossRateMutex.Lock()
+	defer fake.getPingLossRateMutex.Unlock()
+	fake.GetPingLossRateStub = stub
+}
+
+func (fake *Connection) GetPingLossRateReturns(result1 float64) {
+	fake.getPingLossRateMutex.Lock()
+	defer fake.getPingLossRateMutex.Unlock()
+	fake.GetPingLossRateStub = nil
+	fake.getPingLossRateReturns = struct {
+		result1 float64
+	}{result1}
+}
+
+func (fake *Connection) GetPingLossRateReturnsOnCall(i int, result1 float64) {
+	fake.getPingLossRateMutex.Lock()
+	defer fake.getPingLossRateMutex.Unlock()
+	fake.GetPingLossRateStub = nil
+	if fake.getPingLossRateReturnsOnCall == nil {
+		fake.getPingLossRateReturnsOnCall = make(map[int]struct {
+			result1 float64
+		})
+	}
+	fake.getPingLossRateReturnsOnCall[i] = struct {
+		result1 float64
 	}{result1}
 }
 

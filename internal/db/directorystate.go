@@ -19,7 +19,7 @@ type DirectoryState struct {
 
 // DirectoryStateCache provides caching for directory states to enable selective scanning
 type DirectoryStateCache struct {
-	db   KV
+	db     KV
 	prefix string
 }
 
@@ -38,16 +38,16 @@ func (c *DirectoryStateCache) GetDirectoryState(dirPath string) (*DirectoryState
 	if err != nil {
 		return nil, false, err
 	}
-	
+
 	if data == nil {
 		return nil, false, nil
 	}
-	
+
 	var state DirectoryState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, false, err
 	}
-	
+
 	return &state, true, nil
 }
 
@@ -58,7 +58,7 @@ func (c *DirectoryStateCache) PutDirectoryState(dirPath string, state *Directory
 	if err != nil {
 		return err
 	}
-	
+
 	return c.db.PutKV(key, data)
 }
 

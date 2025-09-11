@@ -22,11 +22,11 @@ const (
 	// Default timeout values
 	headRequestTimeout = 10 * time.Second
 	putRequestTimeout  = time.Minute
-	
+
 	// Retry settings
-	initialRetryDelay  = 1 * time.Second
-	maxRetryDelay      = 30 * time.Second
-	maxRetryAttempts   = 3
+	initialRetryDelay = 1 * time.Second
+	maxRetryDelay     = 30 * time.Second
+	maxRetryAttempts  = 3
 )
 
 // Client handles crash reporting with robust error handling and retry logic
@@ -50,7 +50,7 @@ func NewClient(baseURL string) *Client {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	
+
 	return &Client{
 		httpClient: &http.Client{
 			Transport: transport,
@@ -64,12 +64,12 @@ func NewClient(baseURL string) *Client {
 func (c *Client) ReportCrash(ctx context.Context, data []byte) error {
 	// Remove log lines for privacy
 	data = filterLogLines(data)
-	
+
 	// Generate hash for deduplication
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
-	
+
 	slog.Debug("Reporting crash", "id", hash[:8])
-	
+
 	// Check if already reported
 	exists, err := c.checkIfReported(ctx, hash)
 	if err != nil {
@@ -79,7 +79,7 @@ func (c *Client) ReportCrash(ctx context.Context, data []byte) error {
 		slog.Debug("Crash already reported", "id", hash[:8])
 		return nil
 	}
-	
+
 	// Upload with retry logic
 	return c.uploadWithRetry(ctx, hash, data)
 }
@@ -87,23 +87,23 @@ func (c *Client) ReportCrash(ctx context.Context, data []byte) error {
 // checkIfReported checks if a crash report with the given hash already exists
 func (c *Client) checkIfReported(ctx context.Context, hash string) (bool, error) {
 	url := fmt.Sprintf("%s/%s", c.baseURL, hash)
-	
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create HEAD request: %w", err)
 	}
-	
+
 	// Set timeout for HEAD request
 	headCtx, cancel := context.WithTimeout(ctx, headRequestTimeout)
 	defer cancel()
 	req = req.WithContext(headCtx)
-	
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("HEAD request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// If we get a 200 OK, the report already exists
 	return resp.StatusCode == http.StatusOK, nil
 }
@@ -111,40 +111,40 @@ func (c *Client) checkIfReported(ctx context.Context, hash string) (bool, error)
 // uploadWithRetry uploads crash data with exponential backoff retry logic
 func (c *Client) uploadWithRetry(ctx context.Context, hash string, data []byte) error {
 	url := fmt.Sprintf("%s/%s", c.baseURL, hash)
-	
+
 	var lastErr error
 	delay := initialRetryDelay
-	
+
 	for attempt := 0; attempt < maxRetryAttempts; attempt++ {
 		if attempt > 0 {
-			slog.Debug("Retrying crash report upload", 
-				"attempt", attempt+1, 
+			slog.Debug("Retrying crash report upload",
+				"attempt", attempt+1,
 				"delay", delay.String())
-			
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			
+
 			// Exponential backoff, capped at maxRetryDelay
 			delay *= 2
 			if delay > maxRetryDelay {
 				delay = maxRetryDelay
 			}
 		}
-		
+
 		err := c.upload(ctx, url, data)
 		if err == nil {
 			slog.Info("Successfully reported crash", "id", hash[:8])
 			return nil
 		}
-		
+
 		lastErr = err
-		slog.Warn("Failed to upload crash report", 
+		slog.Warn("Failed to upload crash report",
 			"attempt", attempt+1,
 			"error", err)
-		
+
 		// Don't retry on client errors (4xx), only on server errors (5xx) or network issues
 		if httpErr, ok := err.(*HTTPError); ok {
 			if httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 {
@@ -153,7 +153,7 @@ func (c *Client) uploadWithRetry(ctx context.Context, hash string, data []byte) 
 			}
 		}
 	}
-	
+
 	return fmt.Errorf("failed to upload crash report after %d attempts: %w", maxRetryAttempts, lastErr)
 }
 
@@ -163,28 +163,28 @@ func (c *Client) upload(ctx context.Context, url string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to create PUT request: %w", err)
 	}
-	
+
 	// Set timeout for PUT request
 	putCtx, cancel := context.WithTimeout(ctx, putRequestTimeout)
 	defer cancel()
 	req = req.WithContext(putCtx)
-	
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("PUT request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body for better error messages
 	body, _ := io.ReadAll(resp.Body)
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return &HTTPError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)),
 		}
 	}
-	
+
 	return nil
 }
 

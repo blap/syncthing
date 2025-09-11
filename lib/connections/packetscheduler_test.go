@@ -35,7 +35,7 @@ func TestPacketSchedulerAddRemove(t *testing.T) {
 	// Given a packet scheduler and connections
 	scheduler := NewPacketScheduler()
 	deviceID := protocol.LocalDeviceID
-	
+
 	conn1 := NewEnhancedMockConnection("conn1", deviceID, 10, 90.0)
 	conn2 := NewEnhancedMockConnection("conn2", deviceID, 20, 80.0)
 
@@ -70,16 +70,16 @@ func TestPacketSchedulerSelectConnection(t *testing.T) {
 	// Given a packet scheduler with connections of different health scores
 	scheduler := NewPacketScheduler()
 	deviceID := protocol.LocalDeviceID
-	
+
 	// Connection 1: Low health
 	conn1 := NewEnhancedMockConnection("conn1", deviceID, 10, 30.0)
-	
+
 	// Connection 2: High health (should be selected)
 	conn2 := NewEnhancedMockConnection("conn2", deviceID, 20, 90.0)
-	
+
 	// Connection 3: Medium health
 	conn3 := NewEnhancedMockConnection("conn3", deviceID, 15, 60.0)
-	
+
 	scheduler.AddConnection(deviceID, conn1)
 	scheduler.AddConnection(deviceID, conn2)
 	scheduler.AddConnection(deviceID, conn3)
@@ -98,12 +98,12 @@ func TestPacketSchedulerLoadBalancing(t *testing.T) {
 	// Given a packet scheduler with equally healthy connections
 	scheduler := NewPacketScheduler()
 	deviceID := protocol.LocalDeviceID
-	
+
 	// Three connections with equal health scores
 	conn1 := NewEnhancedMockConnection("conn1", deviceID, 10, 80.0)
 	conn2 := NewEnhancedMockConnection("conn2", deviceID, 10, 80.0)
 	conn3 := NewEnhancedMockConnection("conn3", deviceID, 10, 80.0)
-	
+
 	scheduler.AddConnection(deviceID, conn1)
 	scheduler.AddConnection(deviceID, conn2)
 	scheduler.AddConnection(deviceID, conn3)
@@ -121,13 +121,13 @@ func TestPacketSchedulerLoadBalancing(t *testing.T) {
 	// With 300 selections and 3 connections, each should get around 100
 	expected := 100
 	tolerance := 50 // Allow 50% variance due to randomness
-	
+
 	for connID, count := range distribution {
 		if count < expected-tolerance || count > expected+tolerance {
 			t.Errorf("Connection %s was selected %d times, expected around %d (±%d)", connID, count, expected, tolerance)
 		}
 	}
-	
+
 	// Verify all three connections were selected
 	if len(distribution) != 3 {
 		t.Errorf("Expected all 3 connections to be selected, got %d", len(distribution))
@@ -162,7 +162,7 @@ func TestPacketSchedulerSingleConnection(t *testing.T) {
 	// Given a packet scheduler with one connection
 	scheduler := NewPacketScheduler()
 	deviceID := protocol.LocalDeviceID
-	
+
 	conn := NewEnhancedMockConnection("single-conn", deviceID, 10, 75.0)
 	scheduler.AddConnection(deviceID, conn)
 

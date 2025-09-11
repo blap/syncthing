@@ -196,7 +196,7 @@ func (fhm *FolderHealthMonitor) performHealthCheck(folderID string) {
 		// Try to create missing marker file
 		markerPath := filepath.Join(folder.Path, folder.MarkerName)
 		if _, err := os.Stat(markerPath); os.IsNotExist(err) {
-			if err := os.WriteFile(markerPath, []byte{}, 0644); err != nil {
+			if err := os.WriteFile(markerPath, []byte{}, 0o644); err != nil {
 				slog.Warn("Failed to create missing marker file",
 					"folder", folderID,
 					"error", err)

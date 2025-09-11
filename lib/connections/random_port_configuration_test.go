@@ -14,10 +14,10 @@ import (
 func TestRandomPortGeneration(t *testing.T) {
 	// Given a random port generator
 	// TODO: Implement when random port functionality is created
-	
+
 	// When we generate random ports
 	// TODO: Implement when random port functionality is created
-	
+
 	// Then ports should be within valid ranges
 	// TODO: Implement when random port functionality is created
 }
@@ -26,10 +26,10 @@ func TestRandomPortGeneration(t *testing.T) {
 func TestPortAllocationLogic(t *testing.T) {
 	// Given a port allocator with random port configuration
 	// TODO: Implement when random port functionality is created
-	
+
 	// When we allocate ports
 	// TODO: Implement when random port functionality is created
-	
+
 	// Then ports should be allocated according to configuration
 	// TODO: Implement when random port functionality is created
 }
@@ -38,10 +38,10 @@ func TestPortAllocationLogic(t *testing.T) {
 func TestHandlingPortConflicts(t *testing.T) {
 	// Given a port allocator with conflicting ports
 	// TODO: Implement when random port functionality is created
-	
+
 	// When we attempt to allocate a conflicting port
 	// TODO: Implement when random port functionality is created
-	
+
 	// Then conflicts should be resolved appropriately
 	// TODO: Implement when random port functionality is created
 }
@@ -50,10 +50,10 @@ func TestHandlingPortConflicts(t *testing.T) {
 func TestConfigurationValidation(t *testing.T) {
 	// Given various random port configurations
 	// TODO: Implement when random port functionality is created
-	
+
 	// When we validate configurations
 	// TODO: Implement when random port functionality is created
-	
+
 	// Then valid configurations should pass and invalid ones should fail
 	// TODO: Implement when random port functionality is created
 }

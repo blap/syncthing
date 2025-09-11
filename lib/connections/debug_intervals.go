@@ -17,10 +17,10 @@ import (
 func DebugIntervals() {
 	cfg := createTestConfig()
 	hm := NewHealthMonitor(cfg, "device1")
-	
+
 	fmt.Println("Health Score -> Interval mapping:")
 	testScores := []float64{100.0, 90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0, 0.0}
-	
+
 	for _, score := range testScores {
 		hm.SetHealthScore(score)
 		interval := hm.GetInterval()

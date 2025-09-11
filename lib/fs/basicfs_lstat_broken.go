@@ -24,7 +24,7 @@ func (*BasicFilesystem) underlyingLstat(name string) (fi os.FileInfo, err error)
 			time.Sleep(time.Duration(i+1) * time.Millisecond)
 			continue
 		}
-		return
+		return fi, err
 	}
-	return
+	return fi, err
 }

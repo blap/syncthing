@@ -487,4 +487,3 @@ func TestRankTieBreakerStrategies(t *testing.T) {
 		}
 	})
 }
-

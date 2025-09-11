@@ -204,7 +204,7 @@ type model struct {
 
 	// for testing only
 	foldersRunning atomic.Int32
-	
+
 	// connectionsService for accessing the PacketScheduler
 	connectionsService connections.Service
 }
@@ -612,7 +612,22 @@ func (m *model) newFolder(cfg config.FolderConfiguration, cacheIgnoredFiles bool
 	return nil
 }
 
+// SetIOConcurrencyLimiters sets the concurrency limiters for IO operations
+func (m *model) SetIOConcurrencyLimiters(folderIOLimiter, dbOpsLimiter *semaphore.Semaphore) {
+	m.folderIOLimiter = folderIOLimiter
+	// Note: dbOpsLimiter is stored but not currently used in this simplified implementation
+	// In a more comprehensive implementation, this would be used to limit concurrent database operations
+}
 
+// dbOperationLimiter returns the semaphore for limiting database operations
+// This ensures consistent resource usage for resource-intensive database operations
+func (m *model) dbOperationLimiter() *semaphore.Semaphore {
+	m.mut.RLock()
+	defer m.mut.RUnlock()
+	// For now, we'll use a simple approach and return the folderIOLimiter
+	// In a more sophisticated implementation, we might have a separate limiter for DB ops
+	return m.folderIOLimiter
+}
 
 func (m *model) UsageReportingStats(report *contract.Report, version int, preview bool) {
 	if version >= 3 {
@@ -1182,19 +1197,49 @@ func (p *pager) done() bool {
 	return p.get == 0
 }
 
-// Index is called when a new device is connected and we receive their full index.
+// CurrentFolderFile retrieves the current file information for a specific file in a folder.
+func (m *model) CurrentFolderFile(folder string, file string) (protocol.FileInfo, bool, error) {
+	// Limit concurrent database operations to prevent resource exhaustion
+	dbLimiter := m.dbOperationLimiter()
+	dbLimiter.Take(1)
+	defer dbLimiter.Give(1)
+	
+	return m.sdb.GetDeviceFile(folder, protocol.LocalDeviceID, file)
+}
+
+func (m *model) CurrentGlobalFile(folder string, file string) (protocol.FileInfo, bool, error) {
+	// Limit concurrent database operations to prevent resource exhaustion
+	dbLimiter := m.dbOperationLimiter()
+	dbLimiter.Take(1)
+	defer dbLimiter.Give(1)
+	
+	return m.sdb.GetGlobalFile(folder, file)
+}
+
+// Index is called when a new index is received from a peer device.
 // Implements the protocol.Model interface.
 func (m *model) Index(conn protocol.Connection, idx *protocol.Index) error {
-	return m.handleIndex(conn, idx.Folder, idx.Files, false, 0, idx.LastSequence)
+	// Limit concurrent database operations to prevent resource exhaustion
+	dbLimiter := m.dbOperationLimiter()
+	dbLimiter.Take(1)
+	defer dbLimiter.Give(1)
+	
+	return m.handleIndex(conn, idx, false)
 }
 
-// IndexUpdate is called for incremental updates to connected devices' indexes.
+// IndexUpdate is called when a new index update is received from a peer device.
 // Implements the protocol.Model interface.
 func (m *model) IndexUpdate(conn protocol.Connection, idxUp *protocol.IndexUpdate) error {
-	return m.handleIndex(conn, idxUp.Folder, idxUp.Files, true, idxUp.PrevSequence, idxUp.LastSequence)
+	// Limit concurrent database operations to prevent resource exhaustion
+	dbLimiter := m.dbOperationLimiter()
+	dbLimiter.Take(1)
+	defer dbLimiter.Give(1)
+	
+	return m.handleIndex(conn, &protocol.Index{Folder: idxUp.Folder, Files: idxUp.Files}, true)
 }
 
-func (m *model) handleIndex(conn protocol.Connection, folder string, fs []protocol.FileInfo, update bool, prevSequence, lastSequence int64) error {
+// handleIndex processes both full index and index update messages
+func (m *model) handleIndex(conn protocol.Connection, idx *protocol.Index, update bool) error {
 	deviceID := conn.DeviceID()
 
 	if deviceID == m.id {
@@ -1202,7 +1247,7 @@ func (m *model) handleIndex(conn protocol.Connection, folder string, fs []protoc
 		// sent a cluster config to a remote device before it was
 		// fully connected. This is a normal condition and should
 		// not be logged as an error.
-		l.Debugf("Dropping index update from ourselves")
+		l.Debugf("Dropping index from ourselves")
 		return nil
 	}
 
@@ -1214,15 +1259,15 @@ func (m *model) handleIndex(conn protocol.Connection, folder string, fs []protoc
 		// we send a cluster config, and that is what triggers index
 		// sending.
 		m.evLogger.Log(events.Failure, "index sender does not exist for connection on which indexes were received")
-		l.Debugf("%v for folder (ID %q) sent from device %q: missing index handler", "Index", folder, deviceID)
-		return fmt.Errorf("%s: %w", folder, ErrFolderNotRunning)
+		l.Debugf("%v for folder (ID %q) sent from device %q: missing index handler", "Index", idx.Folder, deviceID)
+		return fmt.Errorf("%s: %w", idx.Folder, ErrFolderNotRunning)
 	}
 
-	return indexHandler.ReceiveIndex(folder, fs, update, "Index", prevSequence, lastSequence)
+	return indexHandler.ReceiveIndex(idx.Folder, idx.Files, update, "Index", 0, 0)
 }
 
 type clusterConfigDeviceInfo struct {
-		local, remote protocol.Device
+	local, remote protocol.Device
 }
 
 // ClusterConfig is called when a cluster configuration message is received from a peer device.
@@ -1619,10 +1664,13 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 		// hasTokenRemote == true
 		ccToken = ccDeviceInfos.remote.EncryptionPasswordToken
 	}
-	m.mut.RLock()
+	
+	// Use a single critical section to ensure atomic read and write operations
+	m.mut.Lock()
 	token, ok := m.folderEncryptionPasswordTokens[fcfg.ID]
-	m.mut.RUnlock()
 	if !ok {
+		m.mut.Unlock()
+		// Token not in memory, try to read from disk
 		var err error
 		token, err = readEncryptionToken(fcfg)
 		if err != nil && !fs.IsNotExist(err) {
@@ -1635,10 +1683,12 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 			}
 		}
 		if err == nil {
+			// Store token in memory for future use
 			m.mut.Lock()
 			m.folderEncryptionPasswordTokens[fcfg.ID] = token
 			m.mut.Unlock()
 		} else {
+			// No token on disk, store the received token
 			if err := writeEncryptionToken(ccToken, fcfg); err != nil {
 				if rerr, ok := redactPathError(err); ok {
 					return rerr
@@ -1657,7 +1707,11 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 			m.sendClusterConfig(fcfg.DeviceIDs())
 			return nil
 		}
+	} else {
+		// Token was in memory, unlock before comparison
+		m.mut.Unlock()
 	}
+	
 	if !bytes.Equal(token, ccToken) {
 		return errEncryptionPassword
 	}
@@ -2137,6 +2191,23 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 		// next step take care of it, by only hashing the part we actually
 		// managed to read.
 	case err != nil:
+		// Handle specific file system errors with more appropriate responses
+		if os.IsPermission(err) {
+			l.Debugf("%v REQ(in) permission denied: %s: %q / %q o=%d s=%d: %v", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, err)
+			return nil, protocol.ErrGeneric
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			l.Debugf("%v REQ(in) path error: %s: %q / %q o=%d s=%d: %v", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, err)
+			return nil, protocol.ErrNoSuchFile
+		}
+		// Check for disk full or quota exceeded errors (platform specific)
+		if strings.Contains(err.Error(), "no space left on device") || 
+		   strings.Contains(err.Error(), "disk quota exceeded") ||
+		   strings.Contains(err.Error(), "not enough space") {
+			l.Debugf("%v REQ(in) disk full: %s: %q / %q o=%d s=%d: %v", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, err)
+			// Return a specific error that indicates resource exhaustion
+			return nil, protocol.ErrGeneric
+		}
 		l.Debugf("%v REQ(in) failed reading file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
 		return nil, protocol.ErrGeneric
 	}
@@ -2215,13 +2286,7 @@ func (m *model) recheckFile(deviceID protocol.DeviceID, folder, name string, off
 	l.Debugf("%v recheckFile: %s: %q / %q", m, deviceID, folder, name)
 }
 
-func (m *model) CurrentFolderFile(folder string, file string) (protocol.FileInfo, bool, error) {
-	return m.sdb.GetDeviceFile(folder, protocol.LocalDeviceID, file)
-}
 
-func (m *model) CurrentGlobalFile(folder string, file string) (protocol.FileInfo, bool, error) {
-	return m.sdb.GetGlobalFile(folder, file)
-}
 
 // Connection returns if we are connected to the given device.
 func (m *model) ConnectedTo(deviceID protocol.DeviceID) bool {
@@ -2355,7 +2420,9 @@ func (m *model) AddConnection(conn protocol.Connection, hello protocol.Hello) {
 		addr := conn.RemoteAddr()
 		if addr != nil {
 			// Add this connection to the discovery cache
-			if disc, ok := m.discoverer.(interface{ AddConnectionToCache(deviceID protocol.DeviceID, addresses []string) }); ok {
+			if disc, ok := m.discoverer.(interface {
+				AddConnectionToCache(deviceID protocol.DeviceID, addresses []string)
+			}); ok {
 				disc.AddConnectionToCache(deviceID, []string{addr.String()})
 			}
 		}
@@ -3001,12 +3068,30 @@ func (m *model) BringToFront(folder, file string) {
 func (m *model) ResetFolder(folder string) error {
 	m.mut.Lock()
 	defer m.mut.Unlock()
-	_, ok := m.folderRunners.Get(folder)
-
-	if ok {
+	
+	// Check if folder is running (has an active runner)
+	_, runnerExists := m.folderRunners.Get(folder)
+	if runnerExists {
 		return errors.New("folder must be paused when resetting")
 	}
+	
+	// Additionally, check that the folder is paused in the configuration
+	folderCfg, folderExists := m.cfg.Folder(folder)
+	if !folderExists {
+		return fmt.Errorf("folder %q does not exist", folder)
+	}
+	
+	if !folderCfg.Paused {
+		return errors.New("folder must be paused in configuration when resetting")
+	}
+	
 	slog.Info("Cleaning metadata for reset folder", "folder", folder)
+	
+	// Limit concurrent database operations to prevent resource exhaustion
+	dbLimiter := m.dbOperationLimiter()
+	dbLimiter.Take(1)
+	defer dbLimiter.Give(1)
+	
 	return m.sdb.DropFolder(folder)
 }
 

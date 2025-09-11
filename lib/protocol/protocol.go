@@ -170,6 +170,9 @@ type Connection interface {
 	DeviceID() DeviceID
 	Statistics() Statistics
 	Closed() <-chan struct{}
+	
+	// GetPingLossRate returns the current ping packet loss rate as a percentage
+	GetPingLossRate() float64
 
 	ConnectionInfo
 }
@@ -192,6 +195,10 @@ type HealthMonitorInterface interface {
 	GetInterval() time.Duration
 	// RecordLatency records a new latency measurement
 	RecordLatency(latency time.Duration)
+	// RecordPacketLoss records a new packet loss measurement
+	RecordPacketLoss(packetLoss float64)
+	// GetHealthScore returns the current health score (0-100)
+	GetHealthScore() float64
 	// Start begins monitoring the connection health
 	Start()
 	// Stop stops monitoring the connection health
@@ -255,10 +262,17 @@ type rawConnection struct {
 	startStopMut          sync.Mutex // start and stop must be serialized
 
 	loopWG sync.WaitGroup // Need to ensure no leftover routines in testing
-	
+
 	// Adaptive keep-alive support
 	healthMonitor HealthMonitorInterface
 	pingTimestamp time.Time // Timestamp when last ping was sent
+	
+	// Ping statistics for packet loss tracking
+	pingStatsMut       sync.Mutex
+	pingsSent          int64
+	pingsReceived      int64
+	lastPingSendTime   time.Time
+	lastPingReceiveTime time.Time
 }
 
 type asyncResult struct {
@@ -551,6 +565,13 @@ func (c *rawConnection) ping() bool {
 	if c.healthMonitor != nil {
 		c.pingTimestamp = time.Now()
 	}
+	
+	// Track ping statistics for packet loss calculation
+	c.pingStatsMut.Lock()
+	c.pingsSent++
+	c.lastPingSendTime = time.Now()
+	c.pingStatsMut.Unlock()
+	
 	return c.send(context.Background(), &bep.Ping{}, nil)
 }
 
@@ -645,7 +666,7 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 
 		case *bep.DownloadProgress:
 			err = c.model.DownloadProgress(downloadProgressFromWire(msg))
-			
+
 		case *bep.Ping:
 			// Handle ping message - measure latency if we have a health monitor
 			if c.healthMonitor != nil && !c.pingTimestamp.IsZero() {
@@ -654,13 +675,19 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 				c.pingTimestamp = time.Time{} // Reset timestamp
 			}
 			
-		// case *bep.QueryDevice:
-		// 	// Handle QueryDevice message
-		// 	err = c.model.HandleQueryDevice(msg)
-			
-		// case *bep.ResponseDevice:
-		// 	// Handle ResponseDevice message
-		// 	err = c.model.HandleResponseDevice(msg)
+			// Track ping reception for packet loss calculation
+			c.pingStatsMut.Lock()
+			c.pingsReceived++
+			c.lastPingReceiveTime = time.Now()
+			c.pingStatsMut.Unlock()
+
+			// case *bep.QueryDevice:
+			// 	// Handle QueryDevice message
+			// 	err = c.model.HandleQueryDevice(msg)
+
+			// case *bep.ResponseDevice:
+			// 	// Handle ResponseDevice message
+			// 	err = c.model.HandleResponseDevice(msg)
 		}
 		if err != nil {
 			return newHandleError(err, msgContext)
@@ -1183,7 +1210,7 @@ func (c *rawConnection) pingSender() {
 		// Use fixed interval
 		interval = PingSendInterval
 	}
-	
+
 	ticker := time.NewTicker(interval / 2)
 	defer ticker.Stop()
 
@@ -1206,7 +1233,7 @@ func (c *rawConnection) pingSender() {
 
 			l.Debugln(c.deviceID, "ping -> after", d)
 			c.ping()
-			
+
 			// Update ticker with potentially new interval after sending ping
 			if c.healthMonitor != nil {
 				newInterval := c.healthMonitor.GetInterval()
@@ -1244,6 +1271,63 @@ func (c *rawConnection) pingReceiver() {
 			return
 		}
 	}
+}
+
+// GetHealthMonitor returns the health monitor for this connection, if any
+func (c *rawConnection) GetHealthMonitor() HealthMonitorInterface {
+	return c.healthMonitor
+}
+
+// GetPingLossRate calculates and returns the current ping packet loss rate as a percentage
+func (c *rawConnection) GetPingLossRate() float64 {
+	c.pingStatsMut.Lock()
+	defer c.pingStatsMut.Unlock()
+	
+	// If no pings have been sent, there's no packet loss
+	if c.pingsSent == 0 {
+		return 0.0
+	}
+	
+	// Calculate packet loss rate as percentage
+	lossRate := float64(c.pingsSent-c.pingsReceived) / float64(c.pingsSent) * 100.0
+	
+	// Ensure the rate is within valid bounds
+	if lossRate < 0.0 {
+		lossRate = 0.0
+	}
+	if lossRate > 100.0 {
+		lossRate = 100.0
+	}
+	
+	return lossRate
+}
+
+// GetPingStats returns detailed ping statistics
+func (c *rawConnection) GetPingStats() (sent, received int64, lossRate float64) {
+	c.pingStatsMut.Lock()
+	defer c.pingStatsMut.Unlock()
+	
+	sent = c.pingsSent
+	received = c.pingsReceived
+	
+	// If no pings have been sent, there's no packet loss
+	if c.pingsSent == 0 {
+		lossRate = 0.0
+		return
+	}
+	
+	// Calculate packet loss rate as percentage
+	lossRate = float64(c.pingsSent-c.pingsReceived) / float64(c.pingsSent) * 100.0
+	
+	// Ensure the rate is within valid bounds
+	if lossRate < 0.0 {
+		lossRate = 0.0
+	}
+	if lossRate > 100.0 {
+		lossRate = 100.0
+	}
+	
+	return
 }
 
 type Statistics struct {
@@ -1325,8 +1409,6 @@ func messageContext(msg proto.Message) (string, error) {
 	}
 }
 
-
-
 // connectionWrappingModel takes the Model interface from the model package,
 // which expects the Connection as the first parameter in all methods, and
 // wraps it to conform to the rawModel interface.
@@ -1359,23 +1441,39 @@ func (c *connectionWrappingModel) DownloadProgress(p *DownloadProgress) error {
 	return c.model.DownloadProgress(c.conn, p)
 }
 
+// GetPingLossRate returns the current ping packet loss rate as a percentage
+func (c *connectionWrappingModel) GetPingLossRate() float64 {
+	if rawConn, ok := c.conn.(*rawConnection); ok {
+		return rawConn.GetPingLossRate()
+	}
+	return 0.0
+}
+
+// GetHealthMonitor returns the health monitor for this connection, if any
+func (c *connectionWrappingModel) GetHealthMonitor() HealthMonitorInterface {
+	if rawConn, ok := c.conn.(*rawConnection); ok {
+		return rawConn.healthMonitor
+	}
+	return nil
+}
+
 // HandleQueryDevice handles QueryDevice messages by calling the model's HandleQueryDevice method if it implements QueryDeviceHandler
 // func (c *connectionWrappingModel) HandleQueryDevice(query *bep.QueryDevice) error {
 // 	// First check if the model implements the new interface with connection parameter
 // 	if handler, ok := c.model.(QueryDeviceHandlerWithConn); ok {
 // 		return handler.HandleQueryDevice(c.conn, query)
 // 	}
-// 	
+//
 // 	// Fall back to the old interface without connection parameter
 // 	if handler, ok := c.model.(QueryDeviceHandler); ok {
 // 		return handler.HandleQueryDevice(query)
 // 	}
-// 	
+//
 // 	// Also check the main Model interface
 // 	if handler, ok := c.model.(interface{ HandleQueryDevice(Connection, *bep.QueryDevice) error }); ok {
 // 		return handler.HandleQueryDevice(c.conn, query)
 // 	}
-// 	
+//
 // 	return nil
 // }
 
@@ -1384,11 +1482,11 @@ func (c *connectionWrappingModel) DownloadProgress(p *DownloadProgress) error {
 // 	if handler, ok := c.model.(ResponseDeviceHandler); ok {
 // 		return handler.HandleResponseDevice(response)
 // 	}
-// 	
+//
 // 	// Also check the main Model interface
 // 	if handler, ok := c.model.(interface{ HandleResponseDevice(*bep.ResponseDevice) error }); ok {
 // 		return handler.HandleResponseDevice(response)
 // 	}
-// 	
+//
 // 	return nil
 // }

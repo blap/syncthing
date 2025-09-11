@@ -893,6 +893,15 @@
                           <span ng-if="!connections[deviceCfg.deviceID].secondary.length">1</span>
                         </td>
                       </tr>
+                      <!-- Connection Stability Recommendations -->
+                      <tr ng-if="connections[deviceCfg.deviceID].connected && getConnectionStabilityRecommendations(deviceCfg.deviceID).length > 0">
+                        <th><span class="fas fa-fw fa-exclamation-triangle text-warning"></span>&nbsp;<span translate>Recommendations</span></th>
+                        <td class="text-right">
+                          <div ng-repeat="recommendation in getConnectionStabilityRecommendations(deviceCfg.deviceID)" class="text-warning">
+                            {{recommendation}}
+                          </div>
+                        </td>
+                      </tr>
                       <tr ng-if="deviceCfg.allowedNetworks.length > 0">
                         <th><span class="fas fa-fw fa-filter"></span>&nbsp;<span translate>Allowed Networks</span></th>
                         <td class="text-right">

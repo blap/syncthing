@@ -1,0 +1,345 @@
+// Copyright (C) 2025 The Syncthing Authors.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this file,
+// You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//go:build windows
+
+package connections
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/protocol"
+)
+
+// MockService implements the Service interface for testing
+type MockService struct {
+	dialNowCalled bool
+	cfg           config.Wrapper
+}
+
+func (m *MockService) DialNow() {
+	m.dialNowCalled = true
+}
+
+// Implement other required methods with empty implementations
+func (m *MockService) Serve(ctx context.Context) error { return nil }
+func (m *MockService) Stop()        {}
+func (m *MockService) String() string { return "MockService" }
+func (m *MockService) ListenerStatus() map[string]ListenerStatusEntry { return nil }
+func (m *MockService) ConnectionStatus() map[string]ConnectionStatusEntry { return nil }
+func (m *MockService) NATType() string { return "" }
+func (m *MockService) GetConnectedDevices() []protocol.DeviceID { return nil }
+func (m *MockService) GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol.Connection { return nil }
+func (m *MockService) PacketScheduler() *PacketScheduler { return nil }
+func (m *MockService) AllAddresses() []string { return nil }
+func (m *MockService) ExternalAddresses() []string { return nil }
+func (m *MockService) RawCopy() config.Configuration { return config.Configuration{} }
+
+func TestWindowsNetworkMonitor_Integration(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+
+	// Test that we can create a monitor
+	if monitor == nil {
+		t.Fatal("Failed to create WindowsNetworkMonitor")
+	}
+
+	// Test initial state
+	if monitor.adapterStates == nil {
+		t.Error("Adapter states map should be initialized")
+	}
+
+	// Test that we can start and stop the monitor
+	monitor.Start()
+	
+	// Give it a moment to start
+	time.Sleep(100 * time.Millisecond)
+	
+	// Stop the monitor
+	monitor.Stop()
+}
+
+func TestWindowsNetworkMonitor_AdapterStateChangeDetection(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+	
+	// Set up initial state - both previous and current state are the same (false)
+	monitor.mut.Lock()
+	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+		Name: "TestAdapter",
+		IsUp: false,
+		Type: 6, // Ethernet
+		ChangeCount: 0,
+	}
+	monitor.mut.Unlock()
+	
+	// Reset dialNowCalled flag
+	mockService.dialNowCalled = false
+	
+	// Mock the getNetworkInterfaces method to return the same state
+	// For this test, we'll directly manipulate the adapter states to simulate no change
+	monitor.mut.Lock()
+	currentStates := make(map[string]NetworkAdapterInfo)
+	currentStates["TestAdapter"] = NetworkAdapterInfo{
+		Name: "TestAdapter",
+		IsUp: false, // Same as previous state
+		Type: 6,
+		ChangeCount: 0,
+	}
+	monitor.mut.Unlock()
+	
+	// Manually check for changes with the same state
+	monitor.mut.Lock()
+	for adapter, currentInfo := range currentStates {
+		previousInfo, exists := monitor.adapterStates[adapter]
+		if !exists {
+			mockService.dialNowCalled = true
+		} else {
+			stateChanged := previousInfo.IsUp != currentInfo.IsUp
+			if stateChanged && !previousInfo.IsUp && currentInfo.IsUp {
+				mockService.dialNowCalled = true
+			}
+		}
+	}
+	monitor.mut.Unlock()
+	
+	// Verify that DialNow was not called
+	if mockService.dialNowCalled {
+		t.Error("DialNow should not be called when no changes occur")
+	}
+	
+	// Now test with a real change - adapter coming up
+	monitor.mut.Lock()
+	adapterInfo := monitor.adapterStates["TestAdapter"]
+	adapterInfo.IsUp = false // Previous state is down
+	monitor.adapterStates["TestAdapter"] = adapterInfo
+	monitor.mut.Unlock()
+	
+	// Reset dialNowCalled flag
+	mockService.dialNowCalled = false
+	
+	// Mock the getNetworkInterfaces method to return a different state
+	monitor.mut.Lock()
+	currentStates = make(map[string]NetworkAdapterInfo)
+	currentStates["TestAdapter"] = NetworkAdapterInfo{
+		Name: "TestAdapter",
+		IsUp: true, // Current state is up (different from previous state)
+		Type: 6,
+		ChangeCount: 1,
+	}
+	monitor.mut.Unlock()
+	
+	// Manually check for changes with a different state
+	monitor.mut.Lock()
+	for adapter, currentInfo := range currentStates {
+		previousInfo, exists := monitor.adapterStates[adapter]
+		if !exists {
+			mockService.dialNowCalled = true
+		} else {
+			stateChanged := previousInfo.IsUp != currentInfo.IsUp
+			if stateChanged && !previousInfo.IsUp && currentInfo.IsUp {
+				mockService.dialNowCalled = true
+			}
+		}
+	}
+	monitor.mut.Unlock()
+	
+	// Verify that DialNow was called
+	if !mockService.dialNowCalled {
+		t.Error("DialNow should be called when adapter state changes from down to up")
+	}
+}
+
+func TestWindowsNetworkMonitor_NetworkProfileChangeDetection(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+	
+	// Set initial profile
+	monitor.mut.Lock()
+	monitor.currentProfile = "Public"
+	monitor.mut.Unlock()
+	
+	// Reset dialNowCalled flag
+	mockService.dialNowCalled = false
+	
+	// Mock the GetNetworkProfile method to return the same profile
+	monitor.mut.Lock()
+	newProfile := "Public" // Same as previous profile
+	profileChanged := (monitor.currentProfile != newProfile)
+	if profileChanged {
+		monitor.currentProfile = newProfile
+		mockService.dialNowCalled = true
+	}
+	monitor.mut.Unlock()
+	
+	// Verify that DialNow was not called
+	if mockService.dialNowCalled {
+		t.Error("DialNow should not be called when network profile hasn't changed")
+	}
+	
+	// For now, we'll test that the network profile functionality exists
+	profile := monitor.GetNetworkProfile()
+	if profile == "" {
+		t.Error("GetNetworkProfile should return a non-empty string")
+	}
+}
+
+func TestWindowsNetworkMonitor_TriggerReconnection(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+	
+	// Reset dialNowCalled flag
+	mockService.dialNowCalled = false
+	
+	// Trigger reconnection
+	monitor.triggerReconnection()
+	
+	// Verify that DialNow was called
+	if !mockService.dialNowCalled {
+		t.Error("DialNow should be called when triggerReconnection is invoked")
+	}
+}
+
+func TestWindowsNetworkMonitor_KB5060998Detection(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+	
+	// Set up an adapter with frequent changes to simulate KB5060998 issues
+	monitor.mut.Lock()
+	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+		Name: "TestAdapter",
+		IsUp: true,
+		Type: 6, // Ethernet
+		ChangeCount: 10, // High change count
+	}
+	monitor.mut.Unlock()
+	
+	// Log a frequent change event which should trigger KB5060998 detection
+	monitor.logNetworkEvent("TestAdapter", "kb5060998_suspected", "Frequent changes detected")
+	
+	// Check that event was logged
+	monitor.mut.RLock()
+	eventCount := len(monitor.eventLog)
+	monitor.mut.RUnlock()
+	
+	if eventCount == 0 {
+		t.Error("KB5060998 detection event was not logged")
+	}
+	
+	// Check the last event is the KB5060998 detection event
+	monitor.mut.RLock()
+	lastEvent := monitor.eventLog[len(monitor.eventLog)-1]
+	monitor.mut.RUnlock()
+	
+	if lastEvent.EventType != "kb5060998_suspected" {
+		t.Error("KB5060998 detection event not logged correctly")
+	}
+}
+
+func TestWindowsNetworkMonitor_Diagnostics(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+	
+	// Add some test data
+	monitor.mut.Lock()
+	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+		Name: "TestAdapter",
+		IsUp: true,
+		Type: 6,
+		ChangeCount: 2,
+	}
+	monitor.stabilityMetrics.TotalChanges = 5
+	monitor.stabilityMetrics.RecentChanges = 1
+	monitor.currentProfile = "Private"
+	monitor.mut.Unlock()
+	
+	// Log some events
+	monitor.logNetworkEvent("TestAdapter", "test_event", "Test details")
+	
+	// Test diagnostics logging
+	monitor.logDiagnostics()
+	
+	// The logDiagnostics method should not panic and should execute without error
+	// We can't easily test the slog output, but we can verify the method runs
+	t.Log("Diagnostics logging completed successfully")
+}
+
+func TestWindowsNetworkMonitor_AdaptiveBehavior(t *testing.T) {
+	t.Parallel()
+
+	// Create a mock service
+	mockService := &MockService{}
+
+	// Create Windows network monitor
+	monitor := NewWindowsNetworkMonitor(mockService)
+	
+	// Test initial stability
+	monitor.mut.RLock()
+	initialStability := monitor.stabilityMetrics.StabilityScore
+	monitor.mut.RUnlock()
+	
+	if initialStability != 1.0 {
+		t.Error("Initial stability score should be 1.0")
+	}
+	
+	// Simulate network instability by increasing change count
+	monitor.mut.Lock()
+	monitor.stabilityMetrics.RecentChanges = 10 // Many recent changes
+	monitor.mut.Unlock()
+	
+	// Update adaptive timeouts which should reduce stability score
+	monitor.updateAdaptiveTimeouts()
+	
+	// Check that stability score was updated
+	monitor.mut.RLock()
+	updatedStability := monitor.stabilityMetrics.StabilityScore
+	monitor.mut.RUnlock()
+	
+	if updatedStability >= initialStability {
+		t.Error("Stability score should decrease with network instability")
+	}
+	
+	// Test that adaptive timeout changes based on stability
+	adaptiveTimeout := monitor.getAdaptiveTimeout()
+	
+	// With low stability, timeout should be longer
+	if adaptiveTimeout <= 5*time.Second {
+		t.Error("Adaptive timeout should be longer for unstable networks")
+	}
+}

@@ -225,7 +225,6 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 		metricsTracker:       NewConnectionMetricsTracker(),
 		adaptiveTimeouts:     newAdaptiveTimeouts(), // Initialize adaptive timeouts
 		windowsNetworkMonitor: nil, // Will be initialized after service is fully constructed on Windows
-		healthMonitor:        NewHealthMonitor(50), // Keep stats for up to 50 connections per device
 
 		dialNow:        make(chan struct{}, 1),
 		dialNowDevices: make(map[protocol.DeviceID]struct{}),

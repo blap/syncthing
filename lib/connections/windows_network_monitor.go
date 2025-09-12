@@ -151,38 +151,15 @@ type WindowsNetworkMonitor struct {
 }
 
 // NewWindowsNetworkMonitor creates a new Windows network monitor (Windows only)
-func NewWindowsNetworkMonitor(svc Service) *WindowsNetworkMonitor {
-	ctx, cancel := context.WithCancel(context.Background())
-	monitor := &WindowsNetworkMonitor{
-		service:        svc,
-		ctx:            ctx,
-		cancel:         cancel,
-		adapterStates:  make(map[string]NetworkAdapterInfo),
-		currentProfile: "Unknown",
-		scanInterval:   10 * time.Second,    // Default scan interval (stable network)
-		changeCooldown: 2 * time.Second,     // Cooldown period after changes
-		notificationChan: make(chan struct{}, 10), // Buffered channel for notifications
-		stabilityMetrics: &NetworkStabilityMetrics{
-			StabilityScore:  1.0, // Start with assumption of stable network
-			AdaptiveTimeout: 5 * time.Second,
-		},
-		eventLog:       make([]NetworkChangeEvent, 0, 100), // Keep last 100 events
-		maxEventLogSize: 100,
-	}
-
-	// Initialize the network list manager for profile detection
-	monitor.initializeNetworkListManager()
-
-	// Initialize the current network profile
-	monitor.currentProfile = monitor.GetNetworkProfile()
-
-	return monitor
+// This is kept for backward compatibility but delegates to the safe implementation
+func NewWindowsNetworkMonitor(svc Service) *SafeWindowsNetworkMonitor {
+	return NewSafeWindowsNetworkMonitor(svc)
 }
 
 // newWindowsNetworkMonitor creates a new Windows network monitor (Windows only)
 // This is an internal function that matches the cross-platform interface
-func newWindowsNetworkMonitor(svc Service) *WindowsNetworkMonitor {
-	return NewWindowsNetworkMonitor(svc)
+func newWindowsNetworkMonitor(svc Service) *DefensiveWindowsNetworkMonitor {
+	return NewDefensiveWindowsNetworkMonitor(svc)
 }
 
 // initializeNetworkListManager initializes the Windows Network List Manager for profile detection

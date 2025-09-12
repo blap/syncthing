@@ -103,7 +103,7 @@ func (cm *ConvergenceManager) UpdateConnectionScore(conn protocol.Connection) {
 	}
 	
 	// Get health score if available
-	if healthMonitoredConn, ok := conn.(interface{ HealthMonitor() *HealthMonitor }); ok {
+	if healthMonitoredConn, ok := conn.(interface{ HealthMonitor() protocol.HealthMonitorInterface }); ok {
 		if monitor := healthMonitoredConn.HealthMonitor(); monitor != nil {
 			score.HealthScore = monitor.GetHealthScore()
 			metrics := monitor.GetConnectionQualityMetrics()
@@ -322,7 +322,7 @@ func (cm *ConvergenceManager) ShouldReplaceConnection(existingConn, newConn prot
 	}
 	
 	// Get health metrics for new connection
-	if healthMonitoredConn, ok := newConn.(interface{ HealthMonitor() *HealthMonitor }); ok {
+	if healthMonitoredConn, ok := newConn.(interface{ HealthMonitor() protocol.HealthMonitorInterface }); ok {
 		if monitor := healthMonitoredConn.HealthMonitor(); monitor != nil {
 			newScore.HealthScore = monitor.GetHealthScore()
 			metrics := monitor.GetConnectionQualityMetrics()

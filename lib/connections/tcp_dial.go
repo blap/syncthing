@@ -38,12 +38,22 @@ func (d *tcpDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL)
 
 	conn, err := dialer.DialContextReusePortFunc(d.registry)(ctx, uri.Scheme, tcaddr.String())
 	if err != nil {
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			// We don't have device ID here, but we can still record the address
+			// In a more complete implementation, we would pass the device ID down
+			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, uri.Host, err)
+		}
 		return internalConn{}, err
 	}
 
 	var tc *tls.Conn
-	if tc, err = d.setupTLS(conn, tcaddr); err != nil {
+	if tc, err = d.setupTLS(conn, uri); err != nil {
 		conn.Close()
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, uri.Host, err)
+		}
 		return internalConn{}, err
 	}
 
@@ -53,13 +63,29 @@ func (d *tcpDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL)
 		priority = d.lanPriority
 	}
 
+	// Record connection success for health monitoring
+	if globalService != nil {
+		globalService.healthMonitor.RecordConnectionSuccess(protocol.LocalDeviceID, uri.Host)
+	}
+
 	return newInternalConn(tc, connTypeTCPClient, isLocal, priority), nil
 }
 
-func (d *tcpDialer) setupTLS(conn net.Conn, _ *net.TCPAddr) (*tls.Conn, error) {
-	_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
+func (d *tcpDialer) setupTLS(conn net.Conn, uri *url.URL) (*tls.Conn, error) {
+	// Get progressive dial timeout based on connection history
+	timeout := getProgressiveDialTimeoutForAddress(uri.Host)
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	tc := tls.Client(conn, d.tlsCfg)
+	// Use global adaptive timeouts since we don't have access to service instance here
 	err := tlsTimedHandshake(tc)
+	
+	// Record connection success or failure
+	if err == nil {
+		recordConnectionSuccessForAddress(uri.Host)
+	} else {
+		recordConnectionFailureForAddress(uri.Host)
+	}
+	
 	_ = conn.SetDeadline(time.Time{})
 	return tc, err
 }

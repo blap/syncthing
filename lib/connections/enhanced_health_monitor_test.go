@@ -16,7 +16,7 @@ func TestEnhancedHealthMonitor(t *testing.T) {
 	cfg := createTestConfig()
 
 	t.Run("RecordJitter", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record stable latency (should result in low jitter)
 		hm.RecordLatency(20 * time.Millisecond)
@@ -46,7 +46,7 @@ func TestEnhancedHealthMonitor(t *testing.T) {
 	})
 
 	t.Run("ComprehensiveHealthScore", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Test with excellent network conditions
 		for i := 0; i < 10; i++ {
@@ -78,8 +78,8 @@ func TestEnhancedHealthMonitor(t *testing.T) {
 	})
 
 	t.Run("HealthScoreWeighting", func(t *testing.T) {
-		hm1 := NewHealthMonitor(cfg, "device1")
-		hm2 := NewHealthMonitor(cfg, "device2")
+		hm1 := NewHealthMonitorWithConfig(cfg, "device1")
+		hm2 := NewHealthMonitorWithConfig(cfg, "device2")
 
 		// Test that latency has the highest weight (50%)
 		// Device 1: Good latency, poor jitter and packet loss
@@ -104,7 +104,7 @@ func TestEnhancedHealthMonitor(t *testing.T) {
 	})
 
 	t.Run("JitterCalculation", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Test jitter calculation with known values
 		latencies := []time.Duration{
@@ -131,7 +131,7 @@ func TestEnhancedHealthMonitor(t *testing.T) {
 	})
 
 	t.Run("HealthScoreStability", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record a single measurement
 		hm.RecordLatency(20 * time.Millisecond)
@@ -159,7 +159,7 @@ func TestEnhancedAdaptiveIntervals(t *testing.T) {
 	cfg := createTestConfig()
 
 	t.Run("IntervalAdjustmentWithJitter", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Simulate network with good latency but high jitter
 		for i := 0; i < 10; i++ {
@@ -192,7 +192,7 @@ func TestEnhancedAdaptiveIntervals(t *testing.T) {
 	})
 
 	t.Run("RapidDeteriorationResponse", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Start with good conditions
 		for i := 0; i < 5; i++ {
@@ -202,55 +202,42 @@ func TestEnhancedAdaptiveIntervals(t *testing.T) {
 
 		goodInterval := hm.GetInterval()
 
-		// Suddenly deteriorate conditions
-		for i := 0; i < 3; i++ {
+		// Then rapidly deteriorate
+		for i := 0; i < 5; i++ {
 			hm.RecordLatency(500 * time.Millisecond)
-			hm.RecordPacketLoss(40.0)
+			hm.RecordPacketLoss(30.0)
 		}
 
 		badInterval := hm.GetInterval()
 
-		// Interval should become more aggressive quickly
+		// Interval should become more aggressive (shorter) with bad conditions
 		if badInterval >= goodInterval {
-			t.Errorf("Interval should become more aggressive with deteriorating conditions, got %v (was %v)", badInterval, goodInterval)
+			t.Errorf("Interval should decrease with deteriorating conditions, got %v (was %v)", badInterval, goodInterval)
 		}
 	})
 
-	t.Run("GradualRecovery", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+	t.Run("RecoveryResponse", func(t *testing.T) {
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Start with bad conditions
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 5; i++ {
 			hm.RecordLatency(500 * time.Millisecond)
-			hm.RecordPacketLoss(40.0)
+			hm.RecordPacketLoss(30.0)
 		}
 
-		_ = hm.GetInterval()
-		_ = hm.GetHealthScore()
+		badInterval := hm.GetInterval()
 
-		// Gradually improve conditions
-		for improvement := 0; improvement < 5; improvement++ {
-			// Each iteration, improve conditions slightly
-			latency := time.Duration(500-(improvement*80)) * time.Millisecond
-			packetLoss := 40.0 - float64(improvement*8)
+		// Then recover
+		for i := 0; i < 10; i++ {
+			hm.RecordLatency(20 * time.Millisecond)
+			hm.RecordPacketLoss(0.0)
+		}
 
-			for i := 0; i < 3; i++ {
-				hm.RecordLatency(latency)
-				hm.RecordPacketLoss(packetLoss)
-			}
+		recoveredInterval := hm.GetInterval()
 
-			interval := hm.GetInterval()
-			score := hm.GetHealthScore()
-
-			// Both interval and score should improve gradually
-			// With current implementation, improvements may not be immediate or linear
-			// Just ensure we don't have extreme negative behaviors
-			if score < 0.0 {
-				t.Errorf("Score should not go negative, got %f", score)
-			}
-			// Use variables to avoid compiler warnings
-			_ = interval
-			_ = score
+		// Interval should become less aggressive (longer) with improved conditions
+		if recoveredInterval <= badInterval {
+			t.Errorf("Interval should increase with improving conditions, got %v (was %v)", recoveredInterval, badInterval)
 		}
 	})
 }

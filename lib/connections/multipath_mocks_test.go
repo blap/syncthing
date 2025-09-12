@@ -27,13 +27,15 @@ type EnhancedMockConnection struct {
 	established   time.Time
 	healthScore   float64
 	healthMonitor *HealthMonitor
+	bandwidth     float64 // Mbps
+	packetLoss    float64 // Percentage
 }
 
 // NewEnhancedMockConnection creates a new enhanced mock connection
 func NewEnhancedMockConnection(id string, deviceID protocol.DeviceID, priority int, healthScore float64) *EnhancedMockConnection {
 	// Create a real HealthMonitor for testing
 	cfg := config.New(protocol.EmptyDeviceID)
-	healthMonitor := NewHealthMonitor(config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil), deviceID.String())
+	healthMonitor := NewHealthMonitorWithConfig(config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil), deviceID.String())
 	healthMonitor.SetHealthScore(healthScore)
 
 	return &EnhancedMockConnection{
@@ -44,6 +46,8 @@ func NewEnhancedMockConnection(id string, deviceID protocol.DeviceID, priority i
 		established:   time.Now(),
 		healthScore:   healthScore,
 		healthMonitor: healthMonitor,
+		bandwidth:     10.0, // Default bandwidth 10 Mbps
+		packetLoss:    0.0,  // Default no packet loss
 	}
 }
 
@@ -54,6 +58,7 @@ func NewEnhancedMockConnectionWithNetworkType(id string, deviceID protocol.Devic
 	// to differentiate LAN (higher priority) from WAN (lower priority)
 	if networkType == "lan" {
 		conn.priority = priority + 10 // Boost priority for LAN
+		conn.bandwidth = 100.0        // LAN typically has higher bandwidth
 	}
 	return conn
 }
@@ -71,10 +76,12 @@ func NewEnhancedMockConnectionWithSuccessRate(id string, deviceID protocol.Devic
 }
 
 // NewEnhancedMockConnectionWithTrafficMetrics creates a new enhanced mock connection with traffic metrics
-func NewEnhancedMockConnectionWithTrafficMetrics(id string, deviceID protocol.DeviceID, priority int, healthScore float64, bandwidth float64, latency float64) *EnhancedMockConnection {
+func NewEnhancedMockConnectionWithTrafficMetrics(id string, deviceID protocol.DeviceID, priority int, healthScore float64, bandwidth float64, latency float64, packetLoss float64) *EnhancedMockConnection {
 	conn := NewEnhancedMockConnection(id, deviceID, priority, healthScore)
 	// For traffic metrics simulation, we could add fields, but for now we'll just use the latency
 	conn.latency = time.Duration(latency) * time.Millisecond
+	conn.bandwidth = bandwidth
+	conn.packetLoss = packetLoss
 	return conn
 }
 
@@ -149,6 +156,21 @@ func (m *EnhancedMockConnection) ConnectionID() string {
 	return m.id
 }
 
+// GetBandwidth returns the bandwidth of this connection in Mbps
+func (m *EnhancedMockConnection) GetBandwidth() float64 {
+	return m.bandwidth
+}
+
+// GetLatency returns the latency of this connection
+func (m *EnhancedMockConnection) GetLatency() time.Duration {
+	return m.latency
+}
+
+// GetPacketLoss returns the packet loss percentage of this connection
+func (m *EnhancedMockConnection) GetPacketLoss() float64 {
+	return m.packetLoss
+}
+
 // Add all the required methods to satisfy the protocol.Connection interface
 func (m *EnhancedMockConnection) Index(ctx context.Context, idx *protocol.Index) error { return nil }
 
@@ -166,7 +188,11 @@ func (m *EnhancedMockConnection) ClusterConfig(config *protocol.ClusterConfig, p
 func (m *EnhancedMockConnection) DownloadProgress(ctx context.Context, dp *protocol.DownloadProgress) {
 }
 func (m *EnhancedMockConnection) Start()                                  {}
-func (m *EnhancedMockConnection) Statistics() protocol.Statistics         { return protocol.Statistics{} }
+func (m *EnhancedMockConnection) Statistics() protocol.Statistics         { 
+	return protocol.Statistics{
+		StartedAt: time.Now(),
+	}
+}
 func (m *EnhancedMockConnection) ConnectionInfo() protocol.ConnectionInfo { return m }
 func (m *EnhancedMockConnection) Type() string                            { return "mock" }
 func (m *EnhancedMockConnection) Transport() string                       { return "mock" }

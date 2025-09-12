@@ -199,6 +199,8 @@ type HealthMonitorInterface interface {
 	RecordPacketLoss(packetLoss float64)
 	// GetHealthScore returns the current health score (0-100)
 	GetHealthScore() float64
+	// GetConnectionQualityMetrics returns connection quality metrics
+	GetConnectionQualityMetrics() map[string]float64
 	// Start begins monitoring the connection health
 	Start()
 	// Stop stops monitoring the connection health
@@ -1330,6 +1332,12 @@ func (c *rawConnection) GetPingStats() (sent, received int64, lossRate float64) 
 	return
 }
 
+// HealthMonitor returns the health monitor for this connection, if any
+// This method is used by the convergence manager to access connection health metrics
+func (c *rawConnection) HealthMonitor() HealthMonitorInterface {
+	return c.healthMonitor
+}
+
 type Statistics struct {
 	At            time.Time `json:"at"`
 	InBytesTotal  int64     `json:"inBytesTotal"`
@@ -1451,6 +1459,15 @@ func (c *connectionWrappingModel) GetPingLossRate() float64 {
 
 // GetHealthMonitor returns the health monitor for this connection, if any
 func (c *connectionWrappingModel) GetHealthMonitor() HealthMonitorInterface {
+	if rawConn, ok := c.conn.(*rawConnection); ok {
+		return rawConn.healthMonitor
+	}
+	return nil
+}
+
+// HealthMonitor returns the health monitor for this connection, if any
+// This method is used by the convergence manager to access connection health metrics
+func (c *connectionWrappingModel) HealthMonitor() HealthMonitorInterface {
 	if rawConn, ok := c.conn.(*rawConnection); ok {
 		return rawConn.healthMonitor
 	}

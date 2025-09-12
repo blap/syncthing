@@ -21,6 +21,7 @@ import (
 	"github.com/syncthing/syncthing/lib/connections/registry"
 	"github.com/syncthing/syncthing/lib/dialer"
 	"github.com/syncthing/syncthing/lib/nat"
+	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/svcutil"
 )
 
@@ -54,19 +55,11 @@ func (t *tcpListener) serve(ctx context.Context) error {
 	tcaddr, err := net.ResolveTCPAddr(t.uri.Scheme, t.uri.Host)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
-		return err
-	}
-
-	// Use smart port management: prefer standard ports and only use random ports when necessary
-	if t.cfg.Options().RandomPortsEnabled {
-		smartPort, err := getSmartPort(t.cfg, "tcp")
-		if err != nil {
-			slog.WarnContext(ctx, "Failed to get smart port for TCP listener", slogutil.Error(err))
-			// Fall back to default behavior
-		} else if smartPort > 0 {
-			// Update the address with the smart port
-			tcaddr.Port = smartPort
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
 		}
+		return err
 	}
 
 	lc := net.ListenConfig{
@@ -76,6 +69,10 @@ func (t *tcpListener) serve(ctx context.Context) error {
 	listener, err := lc.Listen(context.TODO(), t.uri.Scheme, tcaddr.String())
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
+		}
 		return err
 	}
 	defer listener.Close()
@@ -141,6 +138,10 @@ func (t *tcpListener) serve(ctx context.Context) error {
 			var ne *net.OpError
 			if ok := errors.As(err, &ne); !ok || !ne.Timeout() {
 				slog.WarnContext(ctx, "Failed to accept TCP connection", slogutil.Error(err))
+				// Record connection failure for health monitoring
+				if globalService != nil {
+					globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
+				}
 
 				acceptFailures++
 				if acceptFailures > maxAcceptFailures {
@@ -169,11 +170,30 @@ func (t *tcpListener) serve(ctx context.Context) error {
 		}
 
 		tc := tls.Server(conn, t.tlsCfg)
+		
+		// Get progressive dial timeout based on connection history
+		timeout := getProgressiveDialTimeoutForAddress(t.uri.Host)
+		_ = conn.SetDeadline(time.Now().Add(timeout))
+		
+		// Use global adaptive timeouts since we don't have access to service instance here
 		if err := tlsTimedHandshake(tc); err != nil {
 			slog.WarnContext(ctx, "Failed TLS handshake", slogutil.Address(tc.RemoteAddr()), slogutil.Error(err))
 			tc.Close()
+			// Record connection failure for health monitoring
+			if globalService != nil {
+				globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
+			}
 			continue
 		}
+		
+		// Record connection success (we don't track failures here since this is a listener)
+		recordConnectionSuccessForAddress(t.uri.Host)
+		// Record connection success for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionSuccess(protocol.LocalDeviceID, t.uri.Host)
+		}
+		
+		_ = conn.SetDeadline(time.Time{})
 
 		priority := t.cfg.Options().ConnectionPriorityTCPWAN
 		isLocal := t.lanChecker.isLAN(conn.RemoteAddr())

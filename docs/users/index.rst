@@ -9,8 +9,6 @@ Usage
    releases
 
    Configuration <config>
-   Resumable Transfers <resumable-transfers>
-   Folder Path Conflicts <folder-path-conflicts>
    advanced
    foldertypes
    introducer

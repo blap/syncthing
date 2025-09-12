@@ -22,7 +22,7 @@ func TestCompleteConnectionManagementSystem(t *testing.T) {
 	t.Run("HealthMonitoringWithAdaptiveIntervals", func(t *testing.T) {
 		// Given a health monitor with all features enabled
 		deviceID := protocol.LocalDeviceID
-		healthMonitor := NewHealthMonitor(cfg, deviceID.String())
+		healthMonitor := NewHealthMonitorWithConfig(cfg, deviceID.String())
 
 		// When we simulate excellent network conditions
 		for i := 0; i < 10; i++ {
@@ -154,8 +154,11 @@ func TestCompleteConnectionManagementSystem(t *testing.T) {
 	t.Run("ConnectionTrackerWithMultipath", func(t *testing.T) {
 		// Given a device connection tracker with multipath enabled
 		tracker := &deviceConnectionTracker{
-			connections:     make(map[protocol.DeviceID][]protocol.Connection),
-			wantConnections: make(map[protocol.DeviceID]int),
+			connections:       make(map[protocol.DeviceID][]protocol.Connection),
+			wantConnections:   make(map[protocol.DeviceID]int),
+			stabilityMgrs:     make(map[protocol.DeviceID]*ConnectionStabilityManager),
+			hysteresisCtrls:   make(map[protocol.DeviceID]*HysteresisController),
+			convergenceMgrs:   make(map[protocol.DeviceID]*ConvergenceManager),
 		}
 
 		deviceID := protocol.LocalDeviceID

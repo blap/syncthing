@@ -14,18 +14,17 @@ import (
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
-// TestHealthMonitorInstantiation tests that health monitors are properly instantiated
-// when adaptive keep-alive is enabled
-func TestHealthMonitorInstantiation(t *testing.T) {
+// TestHealthMonitorEnabled tests that a health monitor is created when the feature is enabled
+func TestHealthMonitorEnabled(t *testing.T) {
 	// Create a config with adaptive keep-alive enabled
 	cfg := createTestConfigForIntegrationTest(true)
 
-	t.Run("Health monitor created when feature enabled", func(t *testing.T) {
+	t.Run("Health monitor creation", func(t *testing.T) {
 		// Given a device ID
 		deviceID := protocol.DeviceID{1, 2, 3, 4}
 
 		// When we create a health monitor
-		healthMonitor := NewHealthMonitor(cfg, deviceID.String())
+		healthMonitor := NewHealthMonitorWithConfig(cfg, deviceID.String())
 
 		// Then it should be created successfully
 		if healthMonitor == nil {
@@ -45,7 +44,7 @@ func TestHealthMonitorInstantiation(t *testing.T) {
 	t.Run("Health monitor lifecycle", func(t *testing.T) {
 		// Given a health monitor
 		deviceID := protocol.DeviceID{1, 2, 3, 4}
-		healthMonitor := NewHealthMonitor(cfg, deviceID.String())
+		healthMonitor := NewHealthMonitorWithConfig(cfg, deviceID.String())
 
 		// When we start and stop it
 		healthMonitor.Start()

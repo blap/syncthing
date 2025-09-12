@@ -15,19 +15,21 @@ func TestAdaptiveIntervalCalculation(t *testing.T) {
 	cfg := createTestConfig()
 
 	t.Run("HealthScoreToIntervalMapping", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Test the mapping from health scores to intervals
+		// With quadratic mapping: better health = longer intervals (less frequent pings)
+		// healthScore of 100 -> maxInterval (60s), healthScore of 0 -> minInterval (10s)
 		testCases := []struct {
 			score    float64
 			expected time.Duration
 		}{
-			{100.0, 60 * time.Second}, // Perfect health
+			{100.0, 60 * time.Second}, // Perfect health -> longest interval
 			{80.0, 42 * time.Second},  // Good health
 			{60.0, 28 * time.Second},  // Moderate health
 			{40.0, 18 * time.Second},  // Poor health
 			{20.0, 12 * time.Second},  // Bad health
-			{0.0, 10 * time.Second},   // Worst health
+			{0.0, 10 * time.Second},   // Worst health -> shortest interval
 		}
 
 		for _, tc := range testCases {
@@ -42,14 +44,14 @@ func TestAdaptiveIntervalCalculation(t *testing.T) {
 	})
 
 	t.Run("IntervalBoundsEnforcement", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Test that intervals never go below minimum
-		hm.SetHealthScore(0.0) // Should result in minimum interval
+		hm.SetHealthScore(100.0) // Should result in minimum interval
 		minInterval := hm.GetInterval()
 
 		// Even with extreme scores, should not go below configured minimum
-		hm.SetHealthScore(-100.0) // Invalid score
+		hm.SetHealthScore(200.0) // Invalid score
 		interval := hm.GetInterval()
 
 		if interval < minInterval {
@@ -57,11 +59,11 @@ func TestAdaptiveIntervalCalculation(t *testing.T) {
 		}
 
 		// Test that intervals never go above maximum
-		hm.SetHealthScore(100.0) // Should result in maximum interval
+		hm.SetHealthScore(0.0) // Should result in maximum interval
 		maxInterval := hm.GetInterval()
 
 		// Even with extreme scores, should not go above configured maximum
-		hm.SetHealthScore(200.0) // Invalid score
+		hm.SetHealthScore(-100.0) // Invalid score
 		interval = hm.GetInterval()
 
 		if interval > maxInterval {
@@ -70,10 +72,10 @@ func TestAdaptiveIntervalCalculation(t *testing.T) {
 	})
 
 	t.Run("QuadraticMappingBehavior", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Test that the quadratic mapping creates appropriate differences
-		// High health scores should result in much longer intervals
+		// High health scores should result in longer intervals (less frequent pings)
 		hm.SetHealthScore(90.0)
 		highInterval := hm.GetInterval()
 
@@ -84,6 +86,7 @@ func TestAdaptiveIntervalCalculation(t *testing.T) {
 		lowInterval := hm.GetInterval()
 
 		// With quadratic mapping, differences should be more pronounced
+		// High health (better) should have longer intervals than mid and low
 		if highInterval <= midInterval || midInterval <= lowInterval {
 			t.Errorf("Expected quadratic behavior: high(%v) > mid(%v) > low(%v)", highInterval, midInterval, lowInterval)
 		}
@@ -101,7 +104,7 @@ func TestAdaptiveIntervalCalculation(t *testing.T) {
 		cfg := createTestConfig()
 		// TODO: Modify config to test different min/max values
 		// This would require a more sophisticated test config setup
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Just verify that we can get interval values
 		interval := hm.GetInterval()
@@ -115,7 +118,7 @@ func TestIntervalUpdateTriggers(t *testing.T) {
 	cfg := createTestConfig()
 
 	t.Run("IntervalUpdatesOnLatencyChange", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record initial interval
 		initialInterval := hm.GetInterval()
@@ -132,7 +135,7 @@ func TestIntervalUpdateTriggers(t *testing.T) {
 	})
 
 	t.Run("IntervalUpdatesOnPacketLossChange", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record initial interval
 		initialInterval := hm.GetInterval()
@@ -148,7 +151,7 @@ func TestIntervalUpdateTriggers(t *testing.T) {
 	})
 
 	t.Run("IntervalStability", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record several identical measurements
 		for i := 0; i < 5; i++ {

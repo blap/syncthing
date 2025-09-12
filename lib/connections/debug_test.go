@@ -16,7 +16,7 @@ import (
 
 func TestDebugHealthScore(t *testing.T) {
 	cfg := config.Wrap("/tmp/test-config.xml", config.New(protocol.EmptyDeviceID), protocol.EmptyDeviceID, nil)
-	hm := NewHealthMonitor(cfg, "device1")
+	hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 	// Test with very bad network conditions
 	hm.RecordLatency(600 * time.Millisecond)

@@ -20,6 +20,7 @@ import (
 	"github.com/syncthing/syncthing/lib/connections/registry"
 	"github.com/syncthing/syncthing/lib/dialer"
 	"github.com/syncthing/syncthing/lib/nat"
+	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/relay/client"
 	"github.com/syncthing/syncthing/lib/svcutil"
 )
@@ -49,6 +50,10 @@ func (t *relayListener) serve(ctx context.Context) error {
 	clnt, err := client.NewClient(t.uri, t.tlsCfg.Certificates, 10*time.Second)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to listen (relay)", slogutil.Error(err))
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
+		}
 		return err
 	}
 
@@ -80,6 +85,10 @@ func (t *relayListener) handleInvitations(ctx context.Context, clnt client.Relay
 			if err != nil {
 				if !errors.Is(err, context.Canceled) {
 					slog.InfoContext(ctx, "Failed to join session", slogutil.Error(err))
+					// Record connection failure for health monitoring
+					if globalService != nil {
+						globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
+					}
 				}
 				continue
 			}
@@ -101,7 +110,29 @@ func (t *relayListener) handleInvitations(ctx context.Context, clnt client.Relay
 				tc = tls.Client(conn, t.tlsCfg)
 			}
 
+			// Get progressive dial timeout based on connection history
+			timeout := getProgressiveDialTimeoutForAddress(t.uri.Host)
+			_ = conn.SetDeadline(time.Now().Add(timeout))
+			
+			// Use global adaptive timeouts since we don't have access to service instance here
 			err = tlsTimedHandshake(tc)
+			
+			// Record connection success or failure
+			if err == nil {
+				recordConnectionSuccessForAddress(t.uri.Host)
+				// Record connection success for health monitoring
+				if globalService != nil {
+					globalService.healthMonitor.RecordConnectionSuccess(protocol.LocalDeviceID, t.uri.Host)
+				}
+			} else {
+				recordConnectionFailureForAddress(t.uri.Host)
+				// Record connection failure for health monitoring
+				if globalService != nil {
+					globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
+				}
+			}
+			
+			_ = conn.SetDeadline(time.Time{})
 			if err != nil {
 				tc.Close()
 				slog.WarnContext(ctx, "Failed TLS handshake", slogutil.Error(err))

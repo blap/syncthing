@@ -30,17 +30,29 @@ type relayDialer struct {
 func (d *relayDialer) Dial(ctx context.Context, id protocol.DeviceID, uri *url.URL) (internalConn, error) {
 	inv, err := client.GetInvitationFromRelay(ctx, uri, id, d.tlsCfg.Certificates, 10*time.Second)
 	if err != nil {
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(id, uri.Host, err)
+		}
 		return internalConn{}, err
 	}
 
 	conn, err := client.JoinSession(ctx, inv)
 	if err != nil {
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(id, uri.Host, err)
+		}
 		return internalConn{}, err
 	}
 
 	err = dialer.SetTCPOptions(conn)
 	if err != nil {
 		conn.Close()
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(id, uri.Host, err)
+		}
 		return internalConn{}, err
 	}
 
@@ -56,7 +68,29 @@ func (d *relayDialer) Dial(ctx context.Context, id protocol.DeviceID, uri *url.U
 		tc = tls.Client(conn, d.tlsCfg)
 	}
 
+	// Get progressive dial timeout based on connection history
+	timeout := getProgressiveDialTimeoutForAddress(uri.Host)
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	
+	// Use global adaptive timeouts since we don't have access to service instance here
 	err = tlsTimedHandshake(tc)
+	
+	// Record connection success or failure
+	if err == nil {
+		recordConnectionSuccessForAddress(uri.Host)
+		// Record connection success for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionSuccess(id, uri.Host)
+		}
+	} else {
+		recordConnectionFailureForAddress(uri.Host)
+		// Record connection failure for health monitoring
+		if globalService != nil {
+			globalService.healthMonitor.RecordConnectionError(id, uri.Host, err)
+		}
+	}
+	
+	_ = conn.SetDeadline(time.Time{})
 	if err != nil {
 		tc.Close()
 		return internalConn{}, err

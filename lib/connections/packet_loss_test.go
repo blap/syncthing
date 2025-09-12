@@ -11,12 +11,11 @@ import (
 	"time"
 )
 
-func TestPacketLossTracking(t *testing.T) {
-	// Create a mock config wrapper
+func TestPacketLossHandling(t *testing.T) {
 	cfg := createTestConfig()
 
 	t.Run("RecordPacketLoss", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record no packet loss
 		hm.RecordPacketLoss(0.0)
@@ -38,7 +37,7 @@ func TestPacketLossTracking(t *testing.T) {
 	})
 
 	t.Run("AdaptiveIntervalWithPacketLoss", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Simulate network with packet loss
 		for i := 0; i < 5; i++ {
@@ -58,7 +57,7 @@ func TestPacketLossTracking(t *testing.T) {
 	})
 
 	t.Run("AdaptiveIntervalRecoveryFromPacketLoss", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// First simulate network with packet loss
 		for i := 0; i < 5; i++ {
@@ -90,7 +89,7 @@ func TestPacketLossTracking(t *testing.T) {
 	})
 
 	t.Run("PacketLossBounds", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 		opts := cfg.Options()
 		minInterval := time.Duration(opts.AdaptiveKeepAliveMinS) * time.Second
 		maxInterval := time.Duration(opts.AdaptiveKeepAliveMaxS) * time.Second
@@ -123,7 +122,7 @@ func TestNormalizePacketLoss(t *testing.T) {
 	cfg := createTestConfig()
 
 	t.Run("NormalizePacketLoss", func(t *testing.T) {
-		hm := NewHealthMonitor(cfg, "device1")
+		hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Test with no packet loss (should score high)
 		hm.RecordPacketLoss(0.0)

@@ -90,21 +90,12 @@ Config File Format
 
 The following shows an example of a default configuration file (IDs will differ):
 
+
 .. note::
    The config examples are present for illustration. Do **not** copy them
    entirely to use as your config. They are likely out-of-date and the values
    may no longer correspond to the defaults.
 
-Adaptive Keep-Alive
-^^^^^^^^^^^^^^^^^^^
-
-Syncthing supports adaptive keep-alive functionality that dynamically adjusts
-network connection keep-alive intervals based on real-time network conditions.
-When enabled, the feature intelligently increases ping frequency in unstable
-networks to prevent connection drops and decreases frequency in stable networks
-to conserve resources. This feature enhances existing static configurations like
-``reconnectionIntervalS`` and ``stunKeepaliveStartS`` by making them dynamic
-and responsive to real-time network conditions.
 
 .. code-block:: xml
 
@@ -208,10 +199,6 @@ and responsive to real-time network conditions.
             <sendFullIndexOnUpgrade>false</sendFullIndexOnUpgrade>
             <connectionLimitEnough>0</connectionLimitEnough>
             <connectionLimitMax>0</connectionLimitMax>
-            <!-- Adaptive keep-alive configuration example -->
-            <adaptiveKeepAliveEnabled>true</adaptiveKeepAliveEnabled>
-            <adaptiveKeepAliveMinS>20</adaptiveKeepAliveMinS>
-            <adaptiveKeepAliveMaxS>120</adaptiveKeepAliveMaxS>
         </options>
         <remoteIgnoredDevice time="2022-01-09T20:02:01Z" id="5SYI2FS-LW6YAXI-JJDYETS-NDBBPIO-256MWBO-XDPXWVG-24QPUM4-PDW4UQU" name="bugger" address="192.168.0.20:22000"></remoteIgnoredDevice>
         <defaults>
@@ -624,12 +611,6 @@ The following child elements may exist:
     devices when this is set to ``true``. See
     :doc:`/advanced/folder-send-xattrs` for more information.
 
-.. option:: folder.resumableTransfersEnabled
-
-    Enables or disables resumable block transfers for this folder. When enabled (default: true),
-    large blocks will be downloaded in chunks, allowing transfers to resume from the last
-    complete checkpoint if a connection drops. Requires the global resumable transfers option
-    to also be enabled.
 
 Device Element
 --------------
@@ -1057,10 +1038,6 @@ Options Element
         <sendFullIndexOnUpgrade>false</sendFullIndexOnUpgrade>
         <connectionLimitEnough>0</connectionLimitEnough>
         <connectionLimitMax>0</connectionLimitMax>
-        <!-- Adaptive keep-alive configuration example -->
-        <adaptiveKeepAliveEnabled>true</adaptiveKeepAliveEnabled>
-        <adaptiveKeepAliveMinS>20</adaptiveKeepAliveMinS>
-        <adaptiveKeepAliveMaxS>120</adaptiveKeepAliveMaxS>
     </options>
 
 The ``options`` element contains all other global configuration options.
@@ -1279,26 +1256,6 @@ The ``options`` element contains all other global configuration options.
 
     Minimum for the :opt:`stunKeepaliveStartS` interval, in seconds.
 
-.. option:: options.adaptiveKeepAliveEnabled
-
-    Whether to enable adaptive keep-alive for connections. When enabled, the
-    keep-alive interval will be dynamically adjusted based on real-time network
-    conditions. In stable networks, the interval will increase to conserve
-    resources, while in unstable networks, the interval will decrease to
-    maintain connectivity. Defaults to ``false`` for backward compatibility.
-
-.. option:: options.adaptiveKeepAliveMinS
-
-    Minimum (most aggressive) interval for adaptive keep-alive, in seconds.
-    This is the shortest interval that will be used when network conditions
-    are unstable. Defaults to ``20`` seconds.
-
-.. option:: options.adaptiveKeepAliveMaxS
-
-    Maximum (most passive) interval for adaptive keep-alive, in seconds.
-    This is the longest interval that will be used when network conditions
-    are stable. Defaults to ``120`` seconds.
-
 .. option:: options.setLowPriority
 
     Syncthing will attempt to lower its process priority at startup.
@@ -1383,19 +1340,6 @@ The ``options`` element contains all other global configuration options.
 
     For compatibility reasons, if both this option and :option:`--auditfile`
     are set, :option:`--auditfile` takes priority.
-
-.. option:: options.transferChunkSizeBytes
-
-    Defines the size of "chunks" within a block for resumable transfer checkpoint purposes.
-    When resumable transfers are enabled, large blocks are downloaded in chunks of this size,
-    allowing transfers to resume from the last complete checkpoint if a connection drops.
-    The default value is 1048576 bytes (1 MiB).
-
-.. option:: options.resumableTransfersEnabled
-
-    Enables or disables resumable block transfers globally. When enabled (default: true),
-    folders can use resumable transfers if they have the folder-level option enabled.
-    When disabled, no resumable transfers will occur regardless of folder settings.
 
 Defaults Element
 ----------------

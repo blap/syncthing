@@ -378,15 +378,15 @@ func (cmm *ConnectionMigrationManager) ShouldMigrateTransfer(conn protocol.Conne
 
 	// Get scores for both connections
 	currentScore := getConnectionQualityScore(conn)
-	bestScore := getConnectionQualityScore(bestConn)
+	bestScore := GetConnectionQualityScore(bestConn)
 
 	// Migrate if the best connection is significantly better
 	// (at least 20% improvement)
 	return bestScore > currentScore*1.2
 }
 
-// getConnectionQualityScore calculates a quality score for a connection
-func getConnectionQualityScore(conn protocol.Connection) float64 {
+// GetConnectionQualityScore calculates a quality score for a connection
+func GetConnectionQualityScore(conn protocol.Connection) float64 {
 	var score float64 = 50.0 // Default score
 
 	// Try to get health score from the connection's health monitor

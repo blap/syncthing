@@ -4,20 +4,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package connections_test
+package connections
 
 import (
 	"testing"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
-	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 func TestDebugStableNetwork(t *testing.T) {
 	cfg := config.Wrap("/tmp/test-config.xml", config.New(protocol.EmptyDeviceID), protocol.EmptyDeviceID, nil)
-	hm := connections.NewHealthMonitor(cfg, "device1")
+	hm := NewHealthMonitorWithConfig(cfg, "device1")
 
 	// Test with good network conditions
 	hm.RecordLatency(20 * time.Millisecond)

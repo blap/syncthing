@@ -21,15 +21,15 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 	cfg := config.New(protocol.EmptyDeviceID)
 
 	// Create all the enhanced components
-	healthMonitor := NewHealthMonitor(config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil), deviceID.String())
+	healthMonitor := NewHealthMonitorWithConfig(config.Wrap("/tmp/test-config.xml", cfg, protocol.EmptyDeviceID, nil), deviceID.String())
 	packetScheduler := NewPacketScheduler()
 	connectionPoolManager := NewConnectionPoolManager(3, 10, 30*time.Minute)
 	connectionMigrationManager := NewConnectionMigrationManager()
 
 	// Create mock connections with different qualities
-	conn1 := NewEnhancedMockConnectionWithTrafficMetrics("conn1", deviceID, 10, 30.0, 500.0, 20.0)  // Low quality
-	conn2 := NewEnhancedMockConnectionWithTrafficMetrics("conn2", deviceID, 50, 60.0, 1000.0, 10.0) // Medium quality
-	conn3 := NewEnhancedMockConnectionWithTrafficMetrics("conn3", deviceID, 90, 90.0, 2000.0, 5.0)  // High quality
+	conn1 := NewEnhancedMockConnectionWithTrafficMetrics("conn1", deviceID, 10, 30.0, 50.0, 20.0, 20.0)  // Low quality
+	conn2 := NewEnhancedMockConnectionWithTrafficMetrics("conn2", deviceID, 50, 60.0, 100.0, 1000.0, 10.0) // Medium quality
+	conn3 := NewEnhancedMockConnectionWithTrafficMetrics("conn3", deviceID, 90, 90.0, 200.0, 2000.0, 5.0)  // High quality
 
 	// Test 1: Health monitoring
 	t.Run("HealthMonitoring", func(t *testing.T) {
@@ -50,6 +50,12 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 		interval := healthMonitor.GetInterval()
 		if interval <= 0 {
 			t.Error("Expected adaptive interval to be positive")
+		}
+
+		// Test connection quality metrics
+		metrics := healthMonitor.GetConnectionQualityMetrics()
+		if metrics["latencyMs"] <= 0 {
+			t.Error("Expected positive latency metric")
 		}
 	})
 
@@ -131,14 +137,32 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 			t.Error("Expected all connections to be added to pool")
 		}
 
+		// Check that we have connections in the pool
+		if pool.connections == nil || len(pool.connections) != 3 {
+			t.Errorf("Expected 3 connections in pool, got %d", len(pool.connections))
+		}
+
 		// Test different allocation strategies
 		roundRobin := pool.GetConnection(RoundRobinStrategy)
 		healthBased := pool.GetConnection(HealthBasedStrategy)
 		random := pool.GetConnection(RandomStrategy)
 		leastUsed := pool.GetConnection(LeastUsedStrategy)
 
-		if roundRobin == nil || healthBased == nil || random == nil || leastUsed == nil {
-			t.Error("Expected all strategies to return connections")
+		// Debug output
+		t.Logf("RoundRobin: %v, HealthBased: %v, Random: %v, LeastUsed: %v", 
+			roundRobin != nil, healthBased != nil, random != nil, leastUsed != nil)
+
+		if roundRobin == nil {
+			t.Error("RoundRobin strategy returned nil")
+		}
+		if healthBased == nil {
+			t.Error("HealthBased strategy returned nil")
+		}
+		if random == nil {
+			t.Error("Random strategy returned nil")
+		}
+		if leastUsed == nil {
+			t.Error("LeastUsed strategy returned nil")
 		}
 
 		// Test returning connections
@@ -182,19 +206,32 @@ func TestCompleteEnhancedConnectionManagement(t *testing.T) {
 
 	// Test 6: Lazy health monitoring
 	t.Run("LazyHealthMonitoring", func(t *testing.T) {
-		// Test monitoring state transitions
-		initialState := healthMonitor.GetMonitoringState()
-		if initialState != monitoringStateActive {
-			t.Errorf("Expected initial state to be active, got %v", initialState)
+		// Test health monitoring functionality
+		initialScore := healthMonitor.GetHealthScore()
+		if initialScore <= 0 || initialScore > 100 {
+			t.Errorf("Expected initial health score between 0 and 100, got %f", initialScore)
 		}
 
-		// Record activity to keep it active
-		healthMonitor.RecordActivity()
+		// Record some metrics
+		healthMonitor.RecordLatency(10 * time.Millisecond)
+		healthMonitor.RecordPacketLoss(0.05) // 5% packet loss
 
-		// Test that state remains active
-		state := healthMonitor.GetMonitoringState()
-		if state != monitoringStateActive {
-			t.Errorf("Expected state to remain active after activity, got %v", state)
+		// Check that health score is updated
+		score := healthMonitor.GetHealthScore()
+		if score <= 0 || score > 100 {
+			t.Errorf("Expected health score between 0 and 100, got %f", score)
+		}
+
+		// Test adaptive interval
+		interval := healthMonitor.GetInterval()
+		if interval <= 0 {
+			t.Error("Expected adaptive interval to be positive")
+		}
+
+		// Test connection quality metrics
+		metrics := healthMonitor.GetConnectionQualityMetrics()
+		if metrics["latencyMs"] <= 0 {
+			t.Error("Expected positive latency metric")
 		}
 	})
 

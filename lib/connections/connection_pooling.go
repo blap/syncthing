@@ -264,6 +264,20 @@ func (cp *ConnectionPool) GetPoolStats() (totalCreated, totalReused, totalExpire
 	return cp.totalCreated, cp.totalReused, cp.totalExpired
 }
 
+// getConnectionQualityScore calculates a quality score for a connection
+func getConnectionQualityScore(conn protocol.Connection) float64 {
+	var score float64 = 50.0 // Default score
+
+	// Try to get health score from the connection's health monitor
+	if healthMonitoredConn, ok := conn.(interface{ HealthMonitor() *HealthMonitor }); ok {
+		if monitor := healthMonitoredConn.HealthMonitor(); monitor != nil {
+			score = monitor.GetHealthScore()
+		}
+	}
+
+	return score
+}
+
 // selectRoundRobin selects a connection in round-robin fashion
 func (cp *ConnectionPool) selectRoundRobin() protocol.Connection {
 	if len(cp.connections) == 0 {
@@ -282,7 +296,7 @@ func (cp *ConnectionPool) selectHealthBased() protocol.Connection {
 	var bestScore float64
 
 	for _, conn := range cp.connections {
-		score := getConnectionQualityScore(conn)
+		score := GetConnectionQualityScore(conn)
 		if bestConn == nil || score > bestScore {
 			bestConn = conn
 			bestScore = score

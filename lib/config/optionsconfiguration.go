@@ -117,12 +117,6 @@ type OptionsConfiguration struct {
 	ConnectionReplacementActivityThreshold int `json:"connectionReplacementActivityThreshold" xml:"connectionReplacementActivityThreshold" default:"60"` // seconds
 	ConnectionReplacementPriorityThreshold int `json:"connectionReplacementPriorityThreshold" xml:"connectionReplacementPriorityThreshold" default:"10"` // priority points
 
-	// Random port configuration for improved connection stability
-	RandomPortsEnabled       bool `json:"randomPortsEnabled" xml:"randomPortsEnabled" default:"false"`
-	RandomPortRangeStart     int  `json:"randomPortRangeStart" xml:"randomPortRangeStart" default:"1024"`
-	RandomPortRangeEnd       int  `json:"randomPortRangeEnd" xml:"randomPortRangeEnd" default:"65535"`
-	RandomPortPersistence    bool `json:"randomPortPersistence" xml:"randomPortPersistence" default:"true"`
-
 	// Legacy deprecated
 	DeprecatedUPnPEnabled        bool     `json:"-" xml:"upnpEnabled,omitempty"`        // Deprecated: Do not use.
 	DeprecatedUPnPLeaseM         int      `json:"-" xml:"upnpLeaseMinutes,omitempty"`   // Deprecated: Do not use.
@@ -228,18 +222,6 @@ func (opts *OptionsConfiguration) prepare(guiPWIsSet bool) {
 	// Set default preferred protocols if none specified
 	if len(opts.PreferredProtocols) == 0 {
 		opts.PreferredProtocols = []string{"quic", "tcp", "relay"}
-	}
-
-	// Validate random port configuration
-	if opts.RandomPortRangeStart < 1024 {
-		opts.RandomPortRangeStart = 1024
-	}
-	if opts.RandomPortRangeEnd > 65535 {
-		opts.RandomPortRangeEnd = 65535
-	}
-	if opts.RandomPortRangeStart >= opts.RandomPortRangeEnd {
-		opts.RandomPortRangeStart = 1024
-		opts.RandomPortRangeEnd = 65535
 	}
 
 	// If usage reporting is enabled we must have a unique ID.

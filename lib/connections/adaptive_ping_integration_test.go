@@ -22,7 +22,7 @@ func TestAdaptivePingSender(t *testing.T) {
 
 	t.Run("Adaptive interval used when feature enabled", func(t *testing.T) {
 		// Given a health monitor with adaptive keep-alive enabled
-		healthMonitor := connections.NewHealthMonitor(cfg, "device1")
+		healthMonitor := connections.NewHealthMonitorWithConfig(cfg, "device1")
 
 		// When we simulate stable network conditions
 		for i := 0; i < 5; i++ {
@@ -70,7 +70,7 @@ func TestAdaptivePingSender(t *testing.T) {
 		cfgDisabled := createTestConfigWithAdaptiveKeepAlive(false)
 
 		// When we create a health monitor
-		healthMonitor := connections.NewHealthMonitor(cfgDisabled, "device1")
+		healthMonitor := connections.NewHealthMonitorWithConfig(cfgDisabled, "device1")
 
 		// The health monitor still exists but won't be used by the protocol layer
 		// This test verifies the health monitor functions correctly regardless of config
@@ -97,7 +97,7 @@ func TestAdaptivePingSender(t *testing.T) {
 	t.Run("Interval updates during connection lifetime", func(t *testing.T) {
 		// Given a health monitor
 		cfg := createTestConfigWithAdaptiveKeepAlive(true)
-		healthMonitor := connections.NewHealthMonitor(cfg, "device1")
+		healthMonitor := connections.NewHealthMonitorWithConfig(cfg, "device1")
 
 		// Record initial interval
 		initialInterval := healthMonitor.GetInterval()
@@ -143,7 +143,7 @@ func TestAdaptivePingSender(t *testing.T) {
 // TestLatencyMeasurement tests that latency measurements are properly recorded
 func TestLatencyMeasurement(t *testing.T) {
 	cfg := createTestConfigWithAdaptiveKeepAlive(true)
-	healthMonitor := connections.NewHealthMonitor(cfg, "device1")
+	healthMonitor := connections.NewHealthMonitorWithConfig(cfg, "device1")
 
 	// Record initial health score
 	initialScore := healthMonitor.GetHealthScore()
@@ -178,7 +178,7 @@ func TestLatencyMeasurement(t *testing.T) {
 // TestPacketLossMeasurement tests that packet loss measurements are properly recorded
 func TestPacketLossMeasurement(t *testing.T) {
 	cfg := createTestConfigWithAdaptiveKeepAlive(true)
-	healthMonitor := connections.NewHealthMonitor(cfg, "device1")
+	healthMonitor := connections.NewHealthMonitorWithConfig(cfg, "device1")
 
 	// Record initial health score
 	initialScore := healthMonitor.GetHealthScore()

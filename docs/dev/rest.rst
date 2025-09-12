@@ -24,6 +24,29 @@ key to use those endpoints. This way third-party devices and services can do
 simple calls that don't expose sensitive information without having to expose
 your API key.
 
+Mobile API Usage
+----------------
+
+The Syncthing Android app uses the same REST API as the web interface. When
+developing mobile applications or using Syncthing on mobile devices, consider
+the following:
+
+1. **Connection Management**: Mobile networks can be unreliable, so implement
+   robust retry mechanisms and timeout handling.
+
+2. **Battery Optimization**: Mobile devices may limit background network activity
+   to preserve battery life. Use appropriate Android background processing
+   techniques.
+
+3. **Data Usage**: Be mindful of data usage on mobile networks. Implement
+   bandwidth limiting and sync scheduling features.
+
+4. **Security**: Always use HTTPS when possible, especially over public networks.
+   Store API keys securely using Android Keystore or equivalent platform features.
+
+5. **User Experience**: Provide clear feedback about sync status and connection
+   issues to mobile users.
+
 .. _rest-pagination:
 
 Result Pagination

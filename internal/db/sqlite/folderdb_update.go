@@ -44,8 +44,10 @@ func (s *folderDB) Update(device protocol.DeviceID, fs []protocol.FileInfo) erro
 		return wrap(err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+	
+	// Prepare all statements in a single block
 	txp := &txPreparedStmts{Tx: tx}
-
+	
 	//nolint:sqlclosecheck
 	insertFileStmt, err := txp.Preparex(`
 		INSERT OR REPLACE INTO files (device_idx, remote_sequence, name, type, modified, size, version, deleted, local_flags, blocklist_hash)
@@ -55,6 +57,7 @@ func (s *folderDB) Update(device protocol.DeviceID, fs []protocol.FileInfo) erro
 	if err != nil {
 		return wrap(err, "prepare insert file")
 	}
+	defer insertFileStmt.Close()
 
 	//nolint:sqlclosecheck
 	insertFileInfoStmt, err := txp.Preparex(`
@@ -64,6 +67,7 @@ func (s *folderDB) Update(device protocol.DeviceID, fs []protocol.FileInfo) erro
 	if err != nil {
 		return wrap(err, "prepare insert fileinfo")
 	}
+	defer insertFileInfoStmt.Close()
 
 	//nolint:sqlclosecheck
 	insertBlockListStmt, err := txp.Preparex(`
@@ -73,6 +77,7 @@ func (s *folderDB) Update(device protocol.DeviceID, fs []protocol.FileInfo) erro
 	if err != nil {
 		return wrap(err, "prepare insert blocklist")
 	}
+	defer insertBlockListStmt.Close()
 
 	var prevRemoteSeq int64
 	for i, f := range fs {

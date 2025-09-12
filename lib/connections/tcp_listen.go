@@ -55,8 +55,8 @@ func (t *tcpListener) serve(ctx context.Context) error {
 	tcaddr, err := net.ResolveTCPAddr(t.uri.Scheme, t.uri.Host)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
-		// Record connection failure for health monitoring
-		if globalService != nil {
+		// Record connection failure for health monitoring (safely)
+		if globalService != nil && globalService.healthMonitor != nil {
 			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
 		}
 		return err
@@ -69,8 +69,8 @@ func (t *tcpListener) serve(ctx context.Context) error {
 	listener, err := lc.Listen(context.TODO(), t.uri.Scheme, tcaddr.String())
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to listen (TCP)", slogutil.Error(err))
-		// Record connection failure for health monitoring
-		if globalService != nil {
+		// Record connection failure for health monitoring (safely)
+		if globalService != nil && globalService.healthMonitor != nil {
 			globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
 		}
 		return err
@@ -138,8 +138,8 @@ func (t *tcpListener) serve(ctx context.Context) error {
 			var ne *net.OpError
 			if ok := errors.As(err, &ne); !ok || !ne.Timeout() {
 				slog.WarnContext(ctx, "Failed to accept TCP connection", slogutil.Error(err))
-				// Record connection failure for health monitoring
-				if globalService != nil {
+				// Record connection failure for health monitoring (safely)
+				if globalService != nil && globalService.healthMonitor != nil {
 					globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
 				}
 
@@ -179,8 +179,8 @@ func (t *tcpListener) serve(ctx context.Context) error {
 		if err := tlsTimedHandshake(tc); err != nil {
 			slog.WarnContext(ctx, "Failed TLS handshake", slogutil.Address(tc.RemoteAddr()), slogutil.Error(err))
 			tc.Close()
-			// Record connection failure for health monitoring
-			if globalService != nil {
+			// Record connection failure for health monitoring (safely)
+			if globalService != nil && globalService.healthMonitor != nil {
 				globalService.healthMonitor.RecordConnectionError(protocol.LocalDeviceID, t.uri.Host, err)
 			}
 			continue
@@ -188,8 +188,8 @@ func (t *tcpListener) serve(ctx context.Context) error {
 		
 		// Record connection success (we don't track failures here since this is a listener)
 		recordConnectionSuccessForAddress(t.uri.Host)
-		// Record connection success for health monitoring
-		if globalService != nil {
+		// Record connection success for health monitoring (safely)
+		if globalService != nil && globalService.healthMonitor != nil {
 			globalService.healthMonitor.RecordConnectionSuccess(protocol.LocalDeviceID, t.uri.Host)
 		}
 		

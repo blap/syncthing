@@ -113,8 +113,13 @@ func TestExtendedAnnouncePacket(t *testing.T) {
 	}
 	
 	magic := uint32(msg[0])<<24 | uint32(msg[1])<<16 | uint32(msg[2])<<8 | uint32(msg[3])
-	if magic != Magic {
-		t.Errorf("Incorrect magic number: got %x, expected %x", magic, Magic)
+	// For v2 protocol, we expect v2Magic; for other versions, we expect Magic
+	expectedMagic := Magic
+	if ProtocolVersion == 2 {
+		expectedMagic = 0x2EA7D90C // v2Magic constant value
+	}
+	if magic != expectedMagic {
+		t.Errorf("Incorrect magic number: got %x, expected %x", magic, expectedMagic)
 	}
 	
 	var pkt discoproto.Announce

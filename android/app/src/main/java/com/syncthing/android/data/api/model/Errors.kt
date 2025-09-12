@@ -5,6 +5,6 @@ data class Errors(
 )
 
 data class ErrorInfo(
-    val when: String, // ISO 8601 timestamp
+    val timestamp: String, // ISO 8601 timestamp
     val message: String
 )

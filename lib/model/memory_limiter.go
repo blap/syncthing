@@ -8,7 +8,6 @@ package model
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 // MemoryLimiter controls memory usage across multiple components
@@ -34,17 +33,23 @@ func NewMemoryLimiter() *MemoryLimiter {
 
 // SetLimit sets the total memory limit in bytes (0 for no limit)
 func (ml *MemoryLimiter) SetLimit(limit int64) {
-	atomic.StoreInt64(&ml.limit, limit)
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	ml.limit = limit
 }
 
 // GetLimit returns the current memory limit
 func (ml *MemoryLimiter) GetLimit() int64 {
-	return atomic.LoadInt64(&ml.limit)
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+	return ml.limit
 }
 
 // GetCurrentUsage returns the current total memory usage
 func (ml *MemoryLimiter) GetCurrentUsage() int64 {
-	return atomic.LoadInt64(&ml.currentUsage)
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+	return ml.currentUsage
 }
 
 // RequestMemory requests memory allocation for a component
@@ -54,22 +59,20 @@ func (ml *MemoryLimiter) RequestMemory(componentID string, size int64) bool {
 	defer ml.mu.Unlock()
 
 	// If no limit is set, allow allocation
-	limit := atomic.LoadInt64(&ml.limit)
-	if limit <= 0 {
+	if ml.limit <= 0 {
 		ml.componentUsage[componentID] = size
-		atomic.AddInt64(&ml.currentUsage, size)
+		ml.currentUsage += size
 		return true
 	}
 
 	// Check if this allocation would exceed the limit
-	newUsage := atomic.LoadInt64(&ml.currentUsage) + size
-	if newUsage > limit {
+	if ml.currentUsage+size > ml.limit {
 		return false
 	}
 
 	// Allocate memory
 	ml.componentUsage[componentID] = size
-	atomic.AddInt64(&ml.currentUsage, size)
+	ml.currentUsage += size
 	return true
 }
 
@@ -81,10 +84,10 @@ func (ml *MemoryLimiter) ReleaseMemory(componentID string, size int64) {
 	currentUsage := ml.componentUsage[componentID]
 	if currentUsage <= size {
 		delete(ml.componentUsage, componentID)
-		atomic.AddInt64(&ml.currentUsage, -currentUsage)
+		ml.currentUsage -= currentUsage
 	} else {
 		ml.componentUsage[componentID] = currentUsage - size
-		atomic.AddInt64(&ml.currentUsage, -size)
+		ml.currentUsage -= size
 	}
 }
 
@@ -112,11 +115,12 @@ func (ml *MemoryLimiter) GetComponents() map[string]int64 {
 
 // IsMemoryAvailable checks if a certain amount of memory is available
 func (ml *MemoryLimiter) IsMemoryAvailable(size int64) bool {
-	limit := atomic.LoadInt64(&ml.limit)
-	if limit <= 0 {
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+
+	if ml.limit <= 0 {
 		return true
 	}
 
-	currentUsage := atomic.LoadInt64(&ml.currentUsage)
-	return currentUsage+size <= limit
+	return ml.currentUsage+size <= ml.limit
 }

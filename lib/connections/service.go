@@ -75,19 +75,27 @@ var (
 )
 
 const (
-	tlsHandshakeTimeout           = 10 * time.Second
-	minConnectionLoopSleep        = 5 * time.Second
-	stdConnectionLoopSleep        = time.Minute
+	// Base timeout values - will be made adaptive
+	baseTLSHandshakeTimeout = 10 * time.Second
+	minTLSHandshakeTimeout  = 5 * time.Second
+	maxTLSHandshakeTimeout  = 30 * time.Second
+	minConnectionLoopSleep  = 5 * time.Second
+	maxConnectionLoopSleep  = 2 * time.Minute
+	stdConnectionLoopSleep  = time.Minute
+)
+
+// Global adaptive timeout tracker for use when service instance is not available
+var globalAdaptiveTimeouts = newAdaptiveTimeouts()
+
+// Global service instance for accessing service methods from other packages
+var globalService *service
+
+const (
 	worstDialerPriority           = math.MaxInt32
 	shortLivedConnectionThreshold = 5 * time.Second
 	dialMaxParallel               = 64
 	dialMaxParallelPerDevice      = 8
 	maxNumConnections             = 128 // the maximum number of connections we maintain to any given device
-	
-	// Constants for dial cooldown
-	dialCoolDownInterval    = 2 * time.Minute
-	dialCoolDownDelay       = 5 * time.Minute
-	dialCoolDownMaxAttempts = 3
 )
 
 // From go/src/crypto/tls/cipher_suites.go
@@ -184,12 +192,7 @@ type service struct {
 	packetScheduler      *PacketScheduler
 	metricsTracker       *ConnectionMetricsTracker
 	adaptiveTimeouts     *adaptiveTimeouts // Add adaptive timeouts
-	// Windows network monitor for Windows-specific handling (conditionally compiled)
-	windowsNetworkMonitor interface {
-		Start()
-		Stop()
-	} 
-	healthMonitor        *HealthMonitor // Connection health monitor for enhanced error handling
+	healthMonitor        *HealthMonitor    // Add health monitor
 
 	dialNow           chan struct{}
 	dialNowDevices    map[protocol.DeviceID]struct{}
@@ -224,7 +227,7 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 		packetScheduler:      NewPacketScheduler(),
 		metricsTracker:       NewConnectionMetricsTracker(),
 		adaptiveTimeouts:     newAdaptiveTimeouts(), // Initialize adaptive timeouts
-		windowsNetworkMonitor: nil, // Will be initialized after service is fully constructed on Windows
+		healthMonitor:        NewHealthMonitorWithConfig(cfg, myID.String()), // Initialize health monitor
 
 		dialNow:        make(chan struct{}, 1),
 		dialNowDevices: make(map[protocol.DeviceID]struct{}),
@@ -235,10 +238,6 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 	
 	// Set global reference to service instance
 	globalService = service
-	
-	// Initialize Windows network monitor after service is fully constructed (Windows only)
-	// This will only be compiled on Windows platforms
-	service.windowsNetworkMonitor = newWindowsNetworkMonitor(service)
 	
 	cfg.Subscribe(service)
 
@@ -259,22 +258,9 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 	service.Add(svcutil.AsService(service.handleHellos, fmt.Sprintf("%s/handleHellos", service)))
 	service.Add(service.natService)
 
-	// Start Windows network monitoring (Windows only)
-	if service.windowsNetworkMonitor != nil {
-		service.windowsNetworkMonitor.Start()
-	}
-	
-	// Start health monitor cleanup routine
-	service.healthMonitor.StartCleanupRoutine(context.Background(), 1*time.Hour)
-
 	svcutil.OnSupervisorDone(service.Supervisor, func() {
 		service.cfg.Unsubscribe(service.limiter)
 		service.cfg.Unsubscribe(service)
-		
-		// Stop Windows network monitoring
-		if service.windowsNetworkMonitor != nil {
-			service.windowsNetworkMonitor.Stop()
-		}
 	})
 
 	return service
@@ -348,18 +334,23 @@ func (s *service) helloForDevice(remoteID protocol.DeviceID) protocol.Hello {
 		ClientVersion: build.Version,
 		Timestamp:     time.Now().UnixNano(),
 	}
-	if cfg, ok := s.cfg.Device(remoteID); ok {
-		hello.NumConnections = cfg.NumConnections()
-		// Set our name (from the config of our device ID) only if we
-		// already know about the other side device ID.
-		if myCfg, ok := s.cfg.Device(s.myID); ok {
-			hello.DeviceName = myCfg.Name
-		}
+
+	// Set our name (from the config of our device ID) only if we
+	// already know about the other side device ID.
+	if myCfg, ok := s.cfg.Device(s.myID); ok {
+		hello.DeviceName = myCfg.Name
 	}
+
 	return hello
 }
 
 func (s *service) connectionCheckEarly(remoteID protocol.DeviceID, c internalConn) error {
+	// Special handling for local device connections
+	if remoteID == s.myID {
+		// We should not be connecting to ourselves
+		return errDeviceAlreadyConnected
+	}
+
 	if s.cfg.IgnoredDevice(remoteID) {
 		return errDeviceIgnored
 	}
@@ -871,36 +862,6 @@ func (s *service) resolveDeviceAddrs(ctx context.Context, cfg config.DeviceConfi
 	return stringutil.UniqueTrimmedStrings(addrs)
 }
 
-// IsAllowedNetwork returns true if the given host (IP or resolvable
-// hostname) is in the set of allowed networks (CIDR format only).
-func IsAllowedNetwork(host string, allowed []string) bool {
-	if hostNoPort, _, err := net.SplitHostPort(host); err == nil {
-		host = hostNoPort
-	}
-
-	addr, err := net.ResolveIPAddr("ip", host)
-	if err != nil {
-		return false
-	}
-
-	for _, n := range allowed {
-		result := true
-		if strings.HasPrefix(n, "!") {
-			result = false
-			n = n[1:]
-		}
-		_, cidr, err := net.ParseCIDR(n)
-		if err != nil {
-			continue
-		}
-		if cidr.Contains(addr.IP) {
-			return result
-		}
-	}
-
-	return false
-}
-
 type lanChecker struct {
 	cfg config.Wrapper
 }
@@ -1263,13 +1224,6 @@ func urlsToStrings(urls []*url.URL) []string {
 	return strings
 }
 
-// Global adaptive timeout tracker for use when service instance is not available
-var globalAdaptiveTimeouts = newAdaptiveTimeouts()
-
-// Global reference to the service instance for accessing adaptive timeouts
-// from dialer implementations
-var globalService *service
-
 // Adaptive timeout tracking
 type adaptiveTimeouts struct {
 	mut                  sync.RWMutex
@@ -1325,11 +1279,11 @@ func (at *adaptiveTimeouts) calculateAdaptiveTLSHandshakeTimeout() time.Duration
 	adjustedTimeout := time.Duration(float64(at.tlsHandshakeTimeout) * (2.0 - at.connectionSuccessRate))
 	
 	// Ensure timeout stays within reasonable bounds
-	if adjustedTimeout < 5*time.Second {
-		adjustedTimeout = 5 * time.Second
+	if adjustedTimeout < minTLSHandshakeTimeout {
+		adjustedTimeout = minTLSHandshakeTimeout
 	}
-	if adjustedTimeout > 30*time.Second {
-		adjustedTimeout = 30 * time.Second
+	if adjustedTimeout > maxTLSHandshakeTimeout {
+		adjustedTimeout = maxTLSHandshakeTimeout
 	}
 	
 	return adjustedTimeout
@@ -1373,8 +1327,8 @@ func (at *adaptiveTimeouts) calculateAdaptiveConnectionLoopSleep() time.Duration
 	if sleep < minConnectionLoopSleep {
 		sleep = minConnectionLoopSleep
 	}
-	if sleep > 2*time.Minute {
-		sleep = 2 * time.Minute
+	if sleep > maxConnectionLoopSleep {
+		sleep = maxConnectionLoopSleep
 	}
 	
 	return sleep
@@ -1459,15 +1413,45 @@ func (at *adaptiveTimeouts) updateConnectionSuccessRate(success bool) {
 		}
 		
 		// Ensure timeout stays within bounds
-		if at.tlsHandshakeTimeout < 5*time.Second {
-			at.tlsHandshakeTimeout = 5 * time.Second
+		if at.tlsHandshakeTimeout < minTLSHandshakeTimeout {
+			at.tlsHandshakeTimeout = minTLSHandshakeTimeout
 		}
-		if at.tlsHandshakeTimeout > 30*time.Second {
-			at.tlsHandshakeTimeout = 30 * time.Second
+		if at.tlsHandshakeTimeout > maxTLSHandshakeTimeout {
+			at.tlsHandshakeTimeout = maxTLSHandshakeTimeout
 		}
 		
 		at.lastAdjustment = time.Now()
 	}
+}
+
+// IsAllowedNetwork returns true if the given host (IP or resolvable
+// hostname) is in the set of allowed networks (CIDR format only).
+func IsAllowedNetwork(host string, allowed []string) bool {
+	if hostNoPort, _, err := net.SplitHostPort(host); err == nil {
+		host = hostNoPort
+	}
+
+	addr, err := net.ResolveIPAddr("ip", host)
+	if err != nil {
+		return false
+	}
+
+	for _, n := range allowed {
+		result := true
+		if strings.HasPrefix(n, "!") {
+			result = false
+			n = n[1:]
+		}
+		_, cidr, err := net.ParseCIDR(n)
+		if err != nil {
+			continue
+		}
+		if cidr.Contains(addr.IP) {
+			return result
+		}
+	}
+
+	return false
 }
 
 func (s *service) dialParallel(ctx context.Context, deviceID protocol.DeviceID, dialTargets []dialTarget, parentSema *semaphore.Semaphore) (internalConn, bool) {
@@ -1517,56 +1501,35 @@ func (s *service) dialParallel(ctx context.Context, deviceID protocol.DeviceID, 
 					wg.Done()
 					sema.Give(1)
 				}()
-				
-				// Use retry logic with adaptive configuration based on connection health
-				var conn internalConn
-				var err error
-				
-				// Get retry configuration based on connection health
-				retryConfig := s.healthMonitor.GetRetryConfigForConnection(deviceID, tgt.addr)
-				
-				// Execute dial with retry logic
-				Retry(ctx, retryConfig, func(ctx context.Context) error {
-					conn, err = tgt.Dial(ctx)
-					if err == nil {
-						// Add to tracking list before validation
-						allConnsMut.Lock()
-						allConns = append(allConns, conn)
-						allConnsMut.Unlock()
-						
-						// Closes the connection on error
-						err = s.validateIdentity(conn, deviceID)
-						if err != nil {
-							// If validation failed, remove from tracking list as it will be closed by validateIdentity
-							allConnsMut.Lock()
-							for i, c := range allConns {
-								if c == conn {
-									// Remove this connection from the cleanup list
-									allConns = append(allConns[:i], allConns[i+1:]...)
-									break
-								}
-							}
-							allConnsMut.Unlock()
-						}
-					}
-					s.setConnectionStatus(tgt.addr, err)
-					
-					// Track connection success/failure for health monitoring
-					if err != nil {
-						s.healthMonitor.RecordConnectionError(deviceID, tgt.addr, err)
-						s.adaptiveTimeouts.updateConnectionSuccessRate(false)
-						l.Debugln("dialing", deviceID, tgt.uri, "error:", err)
-						return err // Return error to trigger retry
-					} else {
-						s.healthMonitor.RecordConnectionSuccess(deviceID, tgt.addr)
-						s.adaptiveTimeouts.updateConnectionSuccessRate(true)
-						l.Debugln("dialing", deviceID, tgt.uri, "success:", conn)
-						return nil // Success, no retry needed
-					}
-				})
-				
-				// If we successfully dialed, send the connection to the result channel
+				conn, err := tgt.Dial(ctx)
 				if err == nil {
+					// Add to tracking list before validation
+					allConnsMut.Lock()
+					allConns = append(allConns, conn)
+					allConnsMut.Unlock()
+					
+					// Closes the connection on error
+					err = s.validateIdentity(conn, deviceID)
+					if err != nil {
+						// If validation failed, remove from tracking list as it will be closed by validateIdentity
+						allConnsMut.Lock()
+						for i, c := range allConns {
+							if c == conn {
+								// Remove this connection from the cleanup list
+								allConns = append(allConns[:i], allConns[i+1:]...)
+								break
+							}
+						}
+						allConnsMut.Unlock()
+					}
+				}
+				s.setConnectionStatus(tgt.addr, err)
+				// Track connection success/failure for adaptive timeouts
+				s.adaptiveTimeouts.updateConnectionSuccessRate(err == nil)
+				if err != nil {
+					l.Debugln("dialing", deviceID, tgt.uri, "error:", err)
+				} else {
+					l.Debugln("dialing", deviceID, tgt.uri, "success:", conn)
 					res <- conn
 				}
 			}(tgt)
@@ -1658,6 +1621,12 @@ type nextDialDevice struct {
 func (r nextDialRegistry) get(device protocol.DeviceID, addr string) time.Time {
 	return r[device].nextDial[addr]
 }
+
+const (
+	dialCoolDownInterval    = 2 * time.Minute
+	dialCoolDownDelay       = 5 * time.Minute
+	dialCoolDownMaxAttempts = 3
+)
 
 // redialDevice marks the device for immediate redial, unless the remote keeps
 // dropping established connections. Thus we keep track of when the first forced
@@ -2014,12 +1983,6 @@ func (s *service) PacketScheduler() *PacketScheduler {
 
 // DialNow triggers immediate dialing of all configured devices
 func (s *service) DialNow() {
-	// Check if cfg is available
-	if s.cfg == nil {
-		slog.Debug("DialNow called but cfg is nil")
-		return
-	}
-	
 	// Add all configured devices to dialNowDevices
 	cfg := s.cfg.RawCopy()
 	s.dialNowDevicesMut.Lock()

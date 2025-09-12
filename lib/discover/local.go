@@ -179,8 +179,27 @@ func (c *localClient) announcementPkt(instanceID int64, msg []byte) ([]byte, boo
 		msg = make([]byte, 0, pktLen)
 	}
 	msg = msg[:4]
-	binary.BigEndian.PutUint32(msg, Magic)
+	// Use the appropriate magic number based on protocol version
+	magicToUse := Magic
+	if ProtocolVersion == 2 {
+		magicToUse = v2Magic
+		slog.Debug("Using v2 magic for announcement packet", 
+			"deviceId", c.myID,
+			"version", ProtocolVersion)
+	} else {
+		slog.Debug("Using default magic for announcement packet", 
+			"deviceId", c.myID,
+			"version", ProtocolVersion)
+	}
+	binary.BigEndian.PutUint32(msg, magicToUse)
 	msg = append(msg, bs...)
+
+	slog.Debug("Created announcement packet", 
+		"deviceId", c.myID,
+		"addresses", addrs,
+		"magic", magicToUse,
+		"version", ProtocolVersion,
+		"features", c.getSupportedFeatures())
 
 	return msg, true
 }
@@ -212,6 +231,9 @@ func (c *localClient) sendLocalAnnouncements(ctx context.Context) error {
 	
 	for {
 		if msg, ok = c.announcementPkt(instanceID, msg[:0]); ok {
+			slog.Debug("Sending local announcement", 
+				"deviceId", c.myID,
+				"messageSize", len(msg))
 			c.beacon.Send(msg)
 		}
 
@@ -303,13 +325,24 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 		}
 
 		magic := binary.BigEndian.Uint32(buf)
+		slog.DebugContext(ctx, "Received discovery packet", 
+			"magic", magic, 
+			"address", addr.String(),
+			"packetSize", len(buf))
+
 		switch magic {
 		case Magic:
 			// Current version - all good
+			slog.DebugContext(ctx, "Processing packet with default magic", 
+				"magic", magic, 
+				"address", addr.String())
 			c.handleAnnouncement(ctx, buf, addr, ProtocolVersion)
 
 		case v2Magic:
 			// v2 version with extended protocol
+			slog.DebugContext(ctx, "Processing packet with v2 magic", 
+				"magic", magic, 
+				"address", addr.String())
 			c.handleAnnouncement(ctx, buf, addr, 2)
 
 		case v13Magic:
@@ -375,6 +408,11 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 	var newDevice bool
 	if !bytes.Equal(pkt.Id, c.myID[:]) {
 		newDevice = c.registerDevice(addr, &pkt)
+		slog.DebugContext(ctx, "Device registration result", 
+			"device", id, 
+			"newDevice", newDevice)
+	} else {
+		slog.DebugContext(ctx, "Ignoring own announcement", "device", id)
 	}
 
 	if newDevice {
@@ -382,7 +420,9 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 		// so right away.
 		select {
 		case c.forcedBcastTick <- time.Now():
+			slog.DebugContext(ctx, "Forced broadcast tick sent", "device", id)
 		default:
+			slog.DebugContext(ctx, "Forced broadcast tick channel full", "device", id)
 		}
 	}
 }
@@ -391,7 +431,12 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 func (c *localClient) isVersionCompatible(remoteVersion uint32) bool {
 	// For now, we consider versions compatible if they're both >= 1
 	// In the future, we might want more sophisticated compatibility checking
-	return remoteVersion >= 1 && remoteVersion <= ProtocolVersion+1
+	result := remoteVersion >= 1 && remoteVersion <= ProtocolVersion+1
+	slog.Debug("Version compatibility check", 
+		"remoteVersion", remoteVersion, 
+		"localVersion", ProtocolVersion,
+		"compatible", result)
+	return result
 }
 
 func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) bool {

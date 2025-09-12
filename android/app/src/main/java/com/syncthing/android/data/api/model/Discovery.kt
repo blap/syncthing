@@ -4,7 +4,7 @@ data class DiscoveryEntry(
     val addresses: List<String>,
     val direct: Boolean,
     val error: String?,
-    val when: String // ISO 8601 timestamp
+    val timestamp: String // ISO 8601 timestamp
 )
 
 data class DiscoveryResponse(

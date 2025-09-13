@@ -151,6 +151,10 @@ func TestVersionCompatibility(t *testing.T) {
 	lc := c.(*localClient)
 	
 	// Test compatible versions
+	if !lc.isVersionCompatible(0) {
+		t.Error("Version 0 should be compatible (for older Android devices)")
+	}
+	
 	if !lc.isVersionCompatible(1) {
 		t.Error("Version 1 should be compatible")
 	}
@@ -165,8 +169,8 @@ func TestVersionCompatibility(t *testing.T) {
 	}
 	
 	// Test very old version (should not be compatible)
-	if lc.isVersionCompatible(0) {
-		t.Error("Version 0 should not be compatible")
+	if lc.isVersionCompatible(100) {
+		t.Error("Version 100 should not be compatible")
 	}
 }
 

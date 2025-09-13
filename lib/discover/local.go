@@ -34,19 +34,18 @@ import (
 )
 
 type localClient struct {
+	// Embedded fields should be listed first
 	*suture.Supervisor
-	myID     protocol.DeviceID
-	addrList AddressLister
-	name     string
-	evLogger events.Logger
-
-	beacon          beacon.Interface
-	localBcastStart time.Time
-	localBcastTick  <-chan time.Time
-	forcedBcastTick chan time.Time
-
 	*cache
-	
+	// Regular fields
+	myID              protocol.DeviceID
+	addrList          AddressLister
+	name              string
+	evLogger          events.Logger
+	beacon            beacon.Interface
+	localBcastStart   time.Time
+	localBcastTick    <-chan time.Time
+	forcedBcastTick   chan time.Time
 	// For adaptive broadcast intervals
 	broadcastInterval time.Duration
 	discoveryStats    *discoveryStatistics
@@ -57,6 +56,9 @@ type discoveryStatistics struct {
 	successCount int
 	totalCount   int
 	lastUpdate   time.Time
+	// Add fields to track success rate over time
+	successHistory []bool
+	historySize    int
 }
 
 const (
@@ -72,6 +74,7 @@ const (
 	MinBroadcastInterval = 10 * time.Second
 	MaxBroadcastInterval = 60 * time.Second
 	AdaptationWindow     = 5 * time.Minute
+	AdaptationHistorySize = 20 // Track success of last 20 discoveries
 )
 
 // Feature flags for extended capabilities
@@ -88,7 +91,7 @@ func NewLocal(id protocol.DeviceID, addr string, addrList AddressLister, evLogge
 		addrList:          addrList,
 		evLogger:          evLogger,
 		broadcastInterval: BroadcastInterval,
-		discoveryStats:    &discoveryStatistics{},
+		discoveryStats:    &discoveryStatistics{historySize: AdaptationHistorySize, successHistory: make([]bool, 0, AdaptationHistorySize)},
 		localBcastTick:    time.NewTicker(BroadcastInterval).C,
 		forcedBcastTick:   make(chan time.Time),
 		localBcastStart:   time.Now(),
@@ -146,14 +149,21 @@ func (c *localClient) Error() error {
 func (c *localClient) announcementPkt(instanceID int64, msg []byte) ([]byte, bool) {
 	addrs := c.addrList.AllAddresses()
 
+	slog.Debug("All addresses before filtering", "addresses", addrs, "deviceId", c.myID)
+
 	// remove all addresses which are not dialable
 	addrs = filterUndialableLocal(addrs)
+
+	slog.Debug("Addresses after undialable filtering", "addresses", addrs, "deviceId", c.myID)
 
 	// do not leak relay tokens to discovery
 	addrs = sanitizeRelayAddresses(addrs)
 
+	slog.Debug("Addresses after relay sanitization", "addresses", addrs, "deviceId", c.myID)
+
 	if len(addrs) == 0 {
 		// Nothing to announce
+		slog.Debug("No addresses to announce", "deviceId", c.myID)
 		return msg, false
 	}
 
@@ -217,6 +227,8 @@ func (c *localClient) getSupportedFeatures() uint64 {
 	// Check if we support extended attributes
 	features |= FeatureExtendedAttributes
 	
+	slog.Debug("Supported features bitmask", "features", features)
+	
 	return features
 }
 
@@ -235,6 +247,13 @@ func (c *localClient) sendLocalAnnouncements(ctx context.Context) error {
 				"deviceId", c.myID,
 				"messageSize", len(msg))
 			c.beacon.Send(msg)
+			
+			// Add additional debug logging to check if beacon is working
+			if err := c.beacon.Error(); err != nil {
+				slog.Warn("Beacon error detected", "error", err)
+			}
+		} else {
+			slog.Debug("No announcement packet to send - no dialable addresses")
 		}
 
 		select {
@@ -254,7 +273,7 @@ func (c *localClient) adaptBroadcastInterval() {
 	stats := c.discoveryStats
 	
 	// Only adapt if we have enough data
-	if stats.totalCount < 5 {
+	if len(stats.successHistory) < 5 {
 		return
 	}
 	
@@ -262,23 +281,40 @@ func (c *localClient) adaptBroadcastInterval() {
 	if time.Since(stats.lastUpdate) > AdaptationWindow {
 		stats.successCount = 0
 		stats.totalCount = 0
+		stats.successHistory = stats.successHistory[:0]
 		stats.lastUpdate = time.Now()
 		return
 	}
 	
-	// Calculate success rate
-	successRate := float64(stats.successCount) / float64(stats.totalCount)
+	// Calculate success rate from recent history
+	var successes int
+	for _, success := range stats.successHistory {
+		if success {
+			successes++
+		}
+	}
 	
-	// Adjust interval based on success rate
+	successRate := float64(successes) / float64(len(stats.successHistory))
+	
+	// Adjust interval based on success rate with more granular control
 	if successRate > 0.8 {
 		// High success rate, we can broadcast less frequently
 		c.broadcastInterval = min(c.broadcastInterval*11/10, MaxBroadcastInterval)
-	} else if successRate < 0.3 {
+	} else if successRate > 0.5 {
+		// Moderate success rate, keep current interval
+		// No change needed
+	} else if successRate > 0.2 {
 		// Low success rate, we should broadcast more frequently
 		c.broadcastInterval = max(c.broadcastInterval*9/10, MinBroadcastInterval)
+	} else {
+		// Very low success rate, increase frequency significantly
+		c.broadcastInterval = max(c.broadcastInterval*4/5, MinBroadcastInterval)
 	}
 	
-	slog.Debug("Adaptive broadcast interval", "interval", c.broadcastInterval, "successRate", successRate)
+	slog.Debug("Adaptive broadcast interval adjusted", 
+		"interval", c.broadcastInterval, 
+		"successRate", successRate,
+		"historySize", len(stats.successHistory))
 }
 
 // min returns the smaller of two time.Duration values
@@ -313,6 +349,11 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		// Check for beacon errors periodically
+		if err := b.Error(); err != nil {
+			slog.Warn("Beacon error detected", "error", err, "beacon", b.String())
 		}
 
 		buf, addr := b.Recv()
@@ -363,7 +404,7 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 }
 
 // handleAnnouncement processes a received announcement packet
-func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr net.Addr, version uint32) {
+func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr net.Addr, _ uint32) {
 	var pkt discoproto.Announce
 	err := proto.Unmarshal(buf[4:], &pkt)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -393,16 +434,26 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 			"remoteVersion", pkt.Version, 
 			"localVersion", ProtocolVersion,
 			"remoteClient", clientInfo)
-		
-		// Provide specific guidance based on version difference
-		if pkt.Version < ProtocolVersion {
-			slog.WarnContext(ctx, "Remote device is using an older version - consider upgrading for better compatibility", 
-				"device", id)
-		} else if pkt.Version > ProtocolVersion {
-			slog.WarnContext(ctx, "Remote device is using a newer version - consider upgrading", 
-				"device", id)
-		}
 		// Continue processing but log the incompatibility
+	}
+
+	// Check feature compatibility
+	if pkt.Features > 0 {
+		localFeatures := c.getSupportedFeatures()
+		missingFeatures := (^localFeatures) & pkt.Features
+		if missingFeatures > 0 {
+			slog.InfoContext(ctx, "Remote device has features not supported locally", 
+				"device", id,
+				"missingFeatures", c.getFeatureNames(missingFeatures))
+		}
+		
+		// Log supported features in common
+		commonFeatures := localFeatures & pkt.Features
+		if commonFeatures > 0 {
+			slog.DebugContext(ctx, "Common features with remote device", 
+				"device", id,
+				"commonFeatures", c.getFeatureNames(commonFeatures))
+		}
 	}
 
 	var newDevice bool
@@ -429,16 +480,32 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 
 // isVersionCompatible checks if the remote protocol version is compatible with ours
 func (c *localClient) isVersionCompatible(remoteVersion uint32) bool {
-	// For now, we consider versions compatible if they're both >= 1
-	// In the future, we might want more sophisticated compatibility checking
-	result := remoteVersion >= 1 && remoteVersion <= ProtocolVersion+1
+	// Allow version 0 for backward compatibility with older Android devices
+	// Also allow versions >= 1 and <= ProtocolVersion+1 for forward/backward compatibility
+	compatible := (remoteVersion == 0) || (remoteVersion >= 1 && remoteVersion <= ProtocolVersion+1)
+	
 	slog.Debug("Version compatibility check", 
 		"remoteVersion", remoteVersion, 
 		"localVersion", ProtocolVersion,
-		"compatible", result)
-	return result
+		"compatible", compatible)
+	
+	if !compatible {
+		// Provide specific guidance based on version difference
+		if remoteVersion < ProtocolVersion {
+			slog.Warn("Remote device is using an older protocol version - consider if upgrade is needed for optimal compatibility", 
+				"remoteVersion", remoteVersion,
+				"localVersion", ProtocolVersion)
+		} else if remoteVersion > ProtocolVersion {
+			slog.Info("Remote device is using a newer protocol version - local device may be missing features", 
+				"remoteVersion", remoteVersion,
+				"localVersion", ProtocolVersion)
+		}
+	}
+	
+	return compatible
 }
 
+// registerDevice registers a discovered device and updates discovery statistics
 func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) bool {
 	// Remember whether we already had a valid cache entry for this device.
 	// If the instance ID has changed the remote device has restarted since
@@ -460,8 +527,13 @@ func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) 
 		"instanceIdChanged", ce.instanceID != device.InstanceId,
 		"isNewDevice", isNewDevice)
 
-	// Update discovery statistics
+	// Update discovery statistics with more detailed tracking
 	c.discoveryStats.totalCount++
+	c.discoveryStats.successHistory = append(c.discoveryStats.successHistory, isNewDevice)
+	if len(c.discoveryStats.successHistory) > c.discoveryStats.historySize {
+		// Remove oldest entry
+		c.discoveryStats.successHistory = c.discoveryStats.successHistory[1:]
+	}
 	if isNewDevice {
 		c.discoveryStats.successCount++
 	}
@@ -518,6 +590,19 @@ func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) 
 		} else {
 			validAddresses = append(validAddresses, addr)
 			slog.Debug("Accepted address verbatim", "device", id, "address", addr)
+		}
+	}
+
+	// Additional check - if we have no valid addresses, try to add the source address directly
+	if len(validAddresses) == 0 {
+		slog.Warn("No valid addresses found, attempting to use source address directly", "device", id, "source", src.String())
+		srcHost, srcPort, err := net.SplitHostPort(src.String())
+		if err == nil {
+			// Try to create a valid address using the source
+			validAddresses = append(validAddresses, "tcp://"+net.JoinHostPort(srcHost, srcPort))
+			slog.Debug("Added source address as fallback", "device", id, "address", validAddresses[0])
+		} else {
+			slog.Warn("Failed to parse source address for fallback", "device", id, "source", src.String(), "error", err)
 		}
 	}
 

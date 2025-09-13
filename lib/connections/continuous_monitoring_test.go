@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/internal/db"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections/registry"
@@ -443,6 +444,16 @@ func (m *mockConnection) Crypto() string { return "mock" }
 func (m *mockConnection) EstablishedAt() time.Time { return time.Now() }
 
 func (m *mockConnection) ConnectionID() string { return "mock-connection" }
+
+// QueryDevice sends a QueryDevice message to the peer device
+func (m *mockConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+	return nil
+}
+
+// ResponseDevice sends a ResponseDevice message to the peer device
+func (m *mockConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+	return nil
+}
 
 // monitoringTestModel implements the Model interface for testing monitoring
 type monitoringTestModel struct {

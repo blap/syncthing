@@ -273,7 +273,7 @@ func containsString(s, substr string) bool {
 }
 
 // generateRelayTestCertificate generates a test certificate for a device
-func generateRelayTestCertificate(t *testing.T, deviceID protocol.DeviceID) tls.Certificate {
+func generateRelayTestCertificate(t *testing.T, _ protocol.DeviceID) tls.Certificate {
 	// Generate a new RSA private key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

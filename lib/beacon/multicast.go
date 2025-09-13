@@ -9,7 +9,6 @@ package beacon
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net"
 	"time"
 
@@ -32,13 +31,13 @@ func NewMulticast(addr string) Interface {
 func writeMulticasts(ctx context.Context, inbox <-chan []byte, addr string) error {
 	gaddr, err := net.ResolveUDPAddr("udp6", addr)
 	if err != nil {
-		l.Debugln(err)
+		l.Debugln("Failed to resolve multicast address:", err)
 		return err
 	}
 
 	conn, err := net.ListenPacket("udp6", ":0")
 	if err != nil {
-		l.Debugln(err)
+		l.Debugln("Failed to listen on UDP6:", err)
 		return err
 	}
 	doneCtx, cancel := context.WithCancel(ctx)
@@ -64,13 +63,17 @@ func writeMulticasts(ctx context.Context, inbox <-chan []byte, addr string) erro
 
 		intfs, err := netutil.Interfaces()
 		if err != nil {
-			l.Debugln(err)
+			l.Debugln("Failed to list interfaces:", err)
 			return err
 		}
 
 		success := 0
 		for _, intf := range intfs {
+			// Add debug logging for interface information
+			l.Debugln("Checking multicast interface:", intf.Name, "flags:", intf.Flags)
+			
 			if intf.Flags&net.FlagRunning == 0 || intf.Flags&net.FlagMulticast == 0 {
+				l.Debugln("Skipping interface:", intf.Name, "not running or no multicast")
 				continue
 			}
 
@@ -80,7 +83,7 @@ func writeMulticasts(ctx context.Context, inbox <-chan []byte, addr string) erro
 			pconn.SetWriteDeadline(time.Time{})
 
 			if err != nil {
-				l.Debugln(err, "on write to", gaddr, intf.Name)
+				l.Debugln("Multicast write error:", err, "on write to", gaddr, intf.Name)
 				continue
 			}
 
@@ -96,6 +99,8 @@ func writeMulticasts(ctx context.Context, inbox <-chan []byte, addr string) erro
 		}
 
 		if success == 0 {
+			err := errors.New("couldn't send any multicasts")
+			l.Debugln(err)
 			return err
 		}
 	}
@@ -104,13 +109,13 @@ func writeMulticasts(ctx context.Context, inbox <-chan []byte, addr string) erro
 func readMulticasts(ctx context.Context, outbox chan<- recv, addr string) error {
 	gaddr, err := net.ResolveUDPAddr("udp6", addr)
 	if err != nil {
-		l.Debugln(err)
+		l.Debugln("Failed to resolve multicast address:", err)
 		return err
 	}
 
 	conn, err := net.ListenPacket("udp6", addr)
 	if err != nil {
-		l.Debugln(err)
+		l.Debugln("Failed to listen on UDP6 multicast:", err)
 		return err
 	}
 	doneCtx, cancel := context.WithCancel(ctx)
@@ -122,7 +127,7 @@ func readMulticasts(ctx context.Context, outbox chan<- recv, addr string) error 
 
 	intfs, err := netutil.Interfaces()
 	if err != nil {
-		l.Debugln(err)
+		l.Debugln("Failed to list interfaces:", err)
 		return err
 	}
 
@@ -139,8 +144,9 @@ func readMulticasts(ctx context.Context, outbox chan<- recv, addr string) error 
 	}
 
 	if joined == 0 {
-		slog.DebugContext(ctx, "No multicast interfaces available")
-		return errors.New("no multicast interfaces available")
+		err := errors.New("no multicast interfaces available")
+		l.Debugln(err)
+		return err
 	}
 
 	bs := make([]byte, 65536)
@@ -152,7 +158,7 @@ func readMulticasts(ctx context.Context, outbox chan<- recv, addr string) error 
 		}
 		n, _, addr, err := pconn.ReadFrom(bs)
 		if err != nil {
-			l.Debugln(err)
+			l.Debugln("Multicast read error:", err)
 			return err
 		}
 		l.Debugf("recv %d bytes from %s", n, addr)
@@ -162,7 +168,7 @@ func readMulticasts(ctx context.Context, outbox chan<- recv, addr string) error 
 		select {
 		case outbox <- recv{c, addr}:
 		default:
-			slog.DebugContext(ctx, "Dropping message")
+			l.Debugln("Dropping multicast message - outbox full")
 		}
 	}
 }

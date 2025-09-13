@@ -129,7 +129,13 @@ func (m *manager) Lookup(ctx context.Context, deviceID protocol.DeviceID) (addre
 	}
 
 	m.mut.RLock()
-	for _, finder := range m.finders {
+	finderCount := len(m.finders)
+	slog.DebugContext(ctx, "Starting device lookup", "device", deviceID, "finderCount", finderCount)
+	
+	foundInAnyFinder := false
+	for identity, finder := range m.finders {
+		slog.DebugContext(ctx, "Checking finder", "device", deviceID, "finder", identity)
+		
 		if cacheEntry, ok := finder.cache.Get(deviceID); ok {
 			// We have a cache entry. Lets see what it says.
 
@@ -137,6 +143,7 @@ func (m *manager) Lookup(ctx context.Context, deviceID protocol.DeviceID) (addre
 				// It's a positive, valid entry. Use it.
 				slog.DebugContext(ctx, "Found cached discovery entry", "device", deviceID, "finder", finder, "entry", cacheEntry)
 				addresses = append(addresses, cacheEntry.Addresses...)
+				foundInAnyFinder = true
 				continue
 			}
 
@@ -149,11 +156,15 @@ func (m *manager) Lookup(ctx context.Context, deviceID protocol.DeviceID) (addre
 			}
 
 			// It's expired. Ignore and continue.
+			slog.DebugContext(ctx, "Cache entry expired", "device", deviceID, "finder", finder)
 		}
 
 		// Perform the actual lookup and cache the result.
 		if addrs, err := finder.Lookup(ctx, deviceID); err == nil {
 			slog.DebugContext(ctx, "Got finder result", "device", deviceID, "finder", finder, "address", addrs)
+			if len(addrs) > 0 {
+				foundInAnyFinder = true
+			}
 			addresses = append(addresses, addrs...)
 			finder.cache.Set(deviceID, CacheEntry{
 				Addresses: addrs,
@@ -162,6 +173,7 @@ func (m *manager) Lookup(ctx context.Context, deviceID protocol.DeviceID) (addre
 			})
 		} else {
 			// Lookup returned error, add a negative cache entry.
+			slog.DebugContext(ctx, "Finder lookup failed", "device", deviceID, "finder", finder, "error", err)
 			entry := CacheEntry{
 				when:  time.Now(),
 				found: false,
@@ -177,7 +189,15 @@ func (m *manager) Lookup(ctx context.Context, deviceID protocol.DeviceID) (addre
 	addresses = stringutil.UniqueTrimmedStrings(addresses)
 	slices.Sort(addresses)
 
-	slog.DebugContext(ctx, "Final lookup results", "device", deviceID, "addresses", addresses)
+	// Add detailed logging for debugging discovery issues
+	if len(addresses) == 0 {
+		slog.WarnContext(ctx, "Device lookup returned no addresses", 
+			"device", deviceID, 
+			"finderCount", finderCount,
+			"foundInAnyFinder", foundInAnyFinder)
+	} else {
+		slog.DebugContext(ctx, "Final lookup results", "device", deviceID, "addresses", addresses)
+	}
 
 	return addresses, nil
 }

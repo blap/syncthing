@@ -123,6 +123,12 @@ type NetworkChangeEvent struct {
 	StabilityScore float64
 }
 
+// WindowsNetworkMonitorInterface defines the interface for Windows network monitors
+type WindowsNetworkMonitorInterface interface {
+	Start()
+	Stop()
+}
+
 // WindowsNetworkMonitor monitors Windows network adapter state changes
 // and triggers reconnection when adapters wake up or network conditions change
 type WindowsNetworkMonitor struct {
@@ -151,85 +157,29 @@ type WindowsNetworkMonitor struct {
 }
 
 // NewWindowsNetworkMonitor creates a new Windows network monitor (Windows only)
-// This is kept for backward compatibility but delegates to the safe implementation
-func NewWindowsNetworkMonitor(svc Service) *SafeWindowsNetworkMonitor {
-	return NewSafeWindowsNetworkMonitor(svc)
-}
-
-// newWindowsNetworkMonitor creates a new Windows network monitor (Windows only)
-// This is an internal function that matches the cross-platform interface
-func newWindowsNetworkMonitor(svc Service) *DefensiveWindowsNetworkMonitor {
-	return NewDefensiveWindowsNetworkMonitor(svc)
-}
-
-// initializeNetworkListManager initializes the Windows Network List Manager for profile detection
-func (w *WindowsNetworkMonitor) initializeNetworkListManager() {
-	// Load the OLE32 DLL for COM operations
-	ole32, err := syscall.LoadDLL("ole32.dll")
-	if err != nil {
-		slog.Debug("Failed to load ole32.dll for network list manager", slogutil.Error(err))
-		return
+func NewWindowsNetworkMonitor(svc Service) *WindowsNetworkMonitor {
+	// Create a new WindowsNetworkMonitor instance
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	monitor := &WindowsNetworkMonitor{
+		service:         svc,
+		ctx:             ctx,
+		cancel:          cancel,
+		adapterStates:   make(map[string]NetworkAdapterInfo),
+		currentProfile:  "Unknown",
+		scanInterval:    5 * time.Second,
+		changeCooldown:  1 * time.Second,
+		notificationChan: make(chan struct{}, 10),
+		stabilityMetrics: &NetworkStabilityMetrics{
+			StabilityScore:  1.0,
+			AdaptiveTimeout: 5 * time.Second,
+			LastCheckTime:   time.Now(),
+		},
+		eventLog:         make([]NetworkChangeEvent, 0),
+		maxEventLogSize:  100,
 	}
-
-	// Initialize COM
-	coInitialize, err := ole32.FindProc("CoInitializeEx")
-	if err != nil {
-		slog.Debug("Failed to find CoInitializeEx", slogutil.Error(err))
-		return
-	}
-
-	// Initialize COM with multithreaded apartment model
-	// COINIT_MULTITHREADED = 0x0
-	result, _, _ := coInitialize.Call(0, 0)
-	if result != 0 {
-		slog.Debug("Failed to initialize COM", "result", result)
-		return
-	}
-
-	// Get CoCreateInstance procedure
-	coCreateInstance, err := ole32.FindProc("CoCreateInstance")
-	if err != nil {
-		slog.Debug("Failed to find CoCreateInstance", slogutil.Error(err))
-		return
-	}
-
-	// CLSID for Network List Manager
-	// CLSID_NetworkListManager = {DCB00C01-570F-4A9B-8D69-199FDBA5723B}
-	clsid := windows.GUID{
-		Data1: 0xDCB00C01,
-		Data2: 0x570F,
-		Data3: 0x4A9B,
-		Data4: [8]byte{0x8D, 0x69, 0x19, 0x9F, 0xDB, 0xA5, 0x72, 0x3B},
-	}
-
-	// IID for INetworkListManager
-	// IID_INetworkListManager = {DCB00001-570F-4A9B-8D69-199FDBA5723B}
-	iid := windows.GUID{
-		Data1: 0xDCB00001,
-		Data2: 0x570F,
-		Data3: 0x4A9B,
-		Data4: [8]byte{0x8D, 0x69, 0x19, 0x9F, 0xDB, 0xA5, 0x72, 0x3B},
-	}
-
-	// CLSCTX_ALL = 0x17 (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER | CLSCTX_LOCAL_SERVER)
-	clsctx := uintptr(0x17)
-
-	// Create instance of Network List Manager
-	// CoCreateInstance(REFCLSID rclsid, LPUNKNOWN pUnkOuter, DWORD dwClsContext, REFIID riid, LPVOID *ppv)
-	result, _, _ = coCreateInstance.Call(
-		uintptr(unsafe.Pointer(&clsid)),
-		0, // pUnkOuter
-		clsctx,
-		uintptr(unsafe.Pointer(&iid)),
-		uintptr(unsafe.Pointer(&w.networkListManager)),
-	)
-
-	if result != 0 {
-		slog.Debug("Failed to create Network List Manager instance", "result", result)
-		return
-	}
-
-	slog.Debug("Successfully initialized Network List Manager COM interface")
+	
+	return monitor
 }
 
 // Start begins monitoring network adapter state changes
@@ -380,23 +330,6 @@ func (w *WindowsNetworkMonitor) logNetworkEvent(adapterName, eventType, details 
 		"stabilityScore", w.stabilityMetrics.StabilityScore)
 }
 
-// adjustAdaptiveTimeouts periodically adjusts timeouts based on network stability
-func (w *WindowsNetworkMonitor) adjustAdaptiveTimeouts() {
-	defer w.wg.Done()
-	
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case <-ticker.C:
-			w.updateAdaptiveTimeouts()
-		}
-	}
-}
-
 // updateAdaptiveTimeouts updates the adaptive timeouts based on network stability metrics
 func (w *WindowsNetworkMonitor) updateAdaptiveTimeouts() {
 	w.mut.Lock()
@@ -439,11 +372,21 @@ func (w *WindowsNetworkMonitor) updateAdaptiveTimeouts() {
 	}
 }
 
-// getAdaptiveTimeout returns the current adaptive timeout value
-func (w *WindowsNetworkMonitor) getAdaptiveTimeout() time.Duration {
-	w.mut.RLock()
-	defer w.mut.RUnlock()
-	return w.stabilityMetrics.AdaptiveTimeout
+// adjustAdaptiveTimeouts periodically adjusts timeouts based on network stability
+func (w *WindowsNetworkMonitor) adjustAdaptiveTimeouts() {
+	defer w.wg.Done()
+	
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-ticker.C:
+			w.updateAdaptiveTimeouts()
+		}
+	}
 }
 
 // monitorNetworkChanges periodically checks for network adapter state changes
@@ -855,125 +798,70 @@ func (w *WindowsNetworkMonitor) triggerReconnection() {
 
 // GetNetworkProfile returns the current network profile (Public/Private)
 func (w *WindowsNetworkMonitor) GetNetworkProfile() string {
-	// Try to get the network profile using Windows APIs
-	profile, err := w.getNetworkProfileWindows()
-	if err != nil {
-		// Fallback to a default value
-		w.logNetworkEvent("", "profile_error", fmt.Sprintf("Failed to get network profile: %v", err))
-		return "Unknown"
-	}
-	return profile
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	// Return the current profile
+	return w.currentProfile
 }
 
 // GetNetworkProfileEnhanced returns the current network profile with enhanced detection
 func (w *WindowsNetworkMonitor) GetNetworkProfileEnhanced() string {
-	// Try to get the network profile using Windows APIs with enhanced logic
-	profile, err := w.getNetworkProfileWindowsEnhanced()
-	if err != nil {
-		// Fallback to standard method
-		w.logNetworkEvent("", "profile_error", fmt.Sprintf("Enhanced profile detection failed: %v", err))
-		return w.GetNetworkProfile()
-	}
-	return profile
+	// For now, just return the standard profile
+	return w.GetNetworkProfile()
 }
 
-// getNetworkProfileWindows retrieves the network profile using Windows Network List Manager API
-func (w *WindowsNetworkMonitor) getNetworkProfileWindows() (string, error) {
-	// This implementation uses full COM integration to access the Network List Manager
-	// for precise network category detection.
-	
-	// Check if we have a valid Network List Manager instance
-	if w.networkListManager == 0 {
-		return "", fmt.Errorf("Network List Manager not initialized")
-	}
-
-	// Get the network category using COM interface
-	category, err := w.getNetworkCategoryViaCOM()
-	if err != nil {
-		return "", err
-	}
-
-	// Convert the category to a string representation
-	switch category {
-	case NLM_NETWORK_CATEGORY_PUBLIC:
-		return "Public", nil
-	case NLM_NETWORK_CATEGORY_PRIVATE:
-		return "Private", nil
-	case NLM_NETWORK_CATEGORY_DOMAIN:
-		return "Domain", nil
-	default:
-		return "Unknown", nil
-	}
-}
-
-// getNetworkCategoryViaCOM calls the COM interface to get the network category
-func (w *WindowsNetworkMonitor) getNetworkCategoryViaCOM() (uint32, error) {
-	// This is a simplified implementation that would need to be expanded
-	// to properly call the COM interface methods
-	// For now, we'll return a default value and log that we're using COM
-	slog.Debug("Using COM interface for network category detection")
-	
-	// In a full implementation, we would:
-	// 1. Call INetworkListManager::GetNetworks() to get connected networks
-	// 2. For each network, call INetwork::GetCategory() to get its category
-	// 3. Return the appropriate category based on the networks
-	
-	// For demonstration purposes, we'll return a default category
-	// A full implementation would require proper COM vtable method calls
-	return NLM_NETWORK_CATEGORY_PRIVATE, nil
-}
-
-// getNetworkProfileWindowsEnhanced retrieves the network profile with enhanced detection logic
-func (w *WindowsNetworkMonitor) getNetworkProfileWindowsEnhanced() (string, error) {
-	// Try to get the network profile using Windows APIs with full COM integration
-	if w.networkListManager != 0 {
-		profile, err := w.getNetworkProfileWindows()
-		if err == nil && profile != "Unknown" {
-			return profile, nil
-		}
-	}
-
-	// Fallback to heuristic-based detection
-	// Check if we have any adapters that might indicate a domain network
-	// Domain networks typically have specific characteristics
-	
-	// Check for domain-specific indicators
-	// In a real implementation, we might check:
-	// - Domain membership status
-	// - Active Directory connectivity
-	// - Domain controller availability
-	
-	// Fallback to interface-based heuristics
-	// Check adapter names and types for clues
+// GetAdapterStates returns a copy of the current adapter states for testing purposes
+func (w *WindowsNetworkMonitor) GetAdapterStates() map[string]NetworkAdapterInfo {
 	w.mut.RLock()
 	defer w.mut.RUnlock()
 	
-	domainIndicators := 0
-	privateIndicators := 0
-	
-	for _, adapter := range w.adapterStates {
-		// Check for domain indicators (typically wired connections in corporate environments)
-		if adapter.IsUp && adapter.Type == MIB_IF_TYPE_ETHERNET {
-			// Wired ethernet connections in corporate environments often indicate domain networks
-			domainIndicators++
-		}
-		
-		// Check for private network indicators (home networks, typical WiFi)
-		if adapter.IsUp && adapter.Type == MIB_IF_TYPE_WIFI {
-			// WiFi connections often indicate private networks
-			privateIndicators++
-		}
+	// Create a copy to avoid race conditions
+	states := make(map[string]NetworkAdapterInfo)
+	for k, v := range w.adapterStates {
+		states[k] = v
 	}
+	return states
+}
+
+// GetStabilityMetrics returns a copy of the current stability metrics for testing purposes
+func (w *WindowsNetworkMonitor) GetStabilityMetrics() NetworkStabilityMetrics {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
 	
-	// Make a determination based on indicators
-	if domainIndicators > privateIndicators {
-		return "Domain", nil
-	} else if privateIndicators > 0 {
-		return "Private", nil
-	}
+	// Return a copy
+	return *w.stabilityMetrics
+}
+
+// GetEventLog returns a copy of the event log for testing purposes
+func (w *WindowsNetworkMonitor) GetEventLog() []NetworkChangeEvent {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
 	
-	// Default fallback
-	return "Public", nil
+	// Create a copy to avoid race conditions
+	log := make([]NetworkChangeEvent, len(w.eventLog))
+	copy(log, w.eventLog)
+	return log
+}
+
+// GetMaxEventLogSize returns the maximum event log size for testing purposes
+func (w *WindowsNetworkMonitor) GetMaxEventLogSize() int {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	return w.maxEventLogSize
+}
+
+// SetAdapterState allows tests to set adapter states directly
+func (w *WindowsNetworkMonitor) SetAdapterState(name string, info NetworkAdapterInfo) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+	w.adapterStates[name] = info
+}
+
+// GetAdaptiveTimeout returns the current adaptive timeout for testing purposes
+func (w *WindowsNetworkMonitor) GetAdaptiveTimeout() time.Duration {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	return w.stabilityMetrics.AdaptiveTimeout
 }
 
 // NetworkInterfaceChangeCallback handles network interface change notifications

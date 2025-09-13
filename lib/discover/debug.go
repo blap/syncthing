@@ -6,6 +6,6 @@
 
 package discover
 
-import "github.com/syncthing/syncthing/internal/slogutil"
-
-var l = slogutil.NewAdapter("Remote device discovery")
+// Remove unused import and variable
+// import "github.com/syncthing/syncthing/internal/slogutil"
+// var l = slogutil.NewAdapter("Remote device discovery")

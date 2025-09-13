@@ -413,7 +413,7 @@ func TestNetworkConditionResilience(t *testing.T) {
 }
 
 // generateStressTestCertificate generates a test certificate for stress testing
-func generateStressTestCertificate(t *testing.T, deviceID protocol.DeviceID) tls.Certificate {
+func generateStressTestCertificate(t *testing.T, _ protocol.DeviceID) tls.Certificate {
 	// Generate a new RSA private key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

@@ -76,8 +76,12 @@ func TestMultipathFailoverScenario(t *testing.T) {
 	// Initially, LAN should be selected as the best connection
 	connections := tracker.connections[deviceID]
 	bestConn := selectBestConnection(connections)
-	if bestConn != lanConn {
-		t.Errorf("Expected LAN connection to be selected initially, got %v", bestConn)
+	if bestConn != nil {
+		if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != lanConn {
+			t.Errorf("Expected LAN connection to be selected initially, got %v", bestConn)
+		}
+	} else {
+		t.Error("Expected a connection to be selected, got nil")
 	}
 
 	// When LAN connection fails (simulate by setting health to 0)
@@ -85,8 +89,12 @@ func TestMultipathFailoverScenario(t *testing.T) {
 
 	// Then WiFi should be selected as the new best connection
 	bestConn = selectBestConnection(connections)
-	if bestConn != wifiConn {
-		t.Errorf("Expected WiFi connection to be selected after LAN failed, got %v", bestConn)
+	if bestConn != nil {
+		if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != wifiConn {
+			t.Errorf("Expected WiFi connection to be selected after LAN failed, got %v", bestConn)
+		}
+	} else {
+		t.Error("Expected a connection to be selected, got nil")
 	}
 
 	// When WiFi also degrades (simulate by reducing health)
@@ -94,8 +102,12 @@ func TestMultipathFailoverScenario(t *testing.T) {
 
 	// Then Relay should be selected as the new best connection
 	bestConn = selectBestConnection(connections)
-	if bestConn != relayConn {
-		t.Errorf("Expected Relay connection to be selected after WiFi degraded, got %v", bestConn)
+	if bestConn != nil {
+		if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != relayConn {
+			t.Errorf("Expected Relay connection to be selected after WiFi degraded, got %v", bestConn)
+		}
+	} else {
+		t.Error("Expected a connection to be selected, got nil")
 	}
 
 	// When LAN recovers (simulate by restoring health)
@@ -103,8 +115,12 @@ func TestMultipathFailoverScenario(t *testing.T) {
 
 	// Then LAN should be selected again as the best connection
 	bestConn = selectBestConnection(connections)
-	if bestConn != lanConn {
-		t.Errorf("Expected LAN connection to be selected after recovery, got %v", bestConn)
+	if bestConn != nil {
+		if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != lanConn {
+			t.Errorf("Expected LAN connection to be selected after recovery, got %v", bestConn)
+		}
+	} else {
+		t.Error("Expected a connection to be selected, got nil")
 	}
 }
 

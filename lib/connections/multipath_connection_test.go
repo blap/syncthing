@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
@@ -93,6 +94,16 @@ func (m *MockConnection) Crypto() string                                        
 func (m *MockConnection) EstablishedAt() time.Time                                                  { return m.established }
 func (m *MockConnection) ConnectionID() string                                                      { return m.id }
 func (m *MockConnection) GetPingLossRate() float64                                                   { return 0.0 }
+
+// QueryDevice sends a QueryDevice message to the peer device
+func (m *MockConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+	return nil
+}
+
+// ResponseDevice sends a ResponseDevice message to the peer device
+func (m *MockConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+	return nil
+}
 
 // TestDeviceConnectionTrackerMultipath tests that the device connection tracker
 // can handle multiple connections per device when multipath is enabled

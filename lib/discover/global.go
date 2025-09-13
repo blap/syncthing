@@ -32,6 +32,9 @@ import (
 )
 
 type globalClient struct {
+	// Embedded fields should be listed first
+	errorHolder
+	// Regular fields
 	server         string
 	addrList       AddressLister
 	announceClient httpClient
@@ -39,7 +42,10 @@ type globalClient struct {
 	noAnnounce     bool
 	noLookup       bool
 	evLogger       events.Logger
-	errorHolder
+	// Add circuit breaker for server communication
+	circuitBreaker *circuitBreaker
+	// Add backoff for retry logic
+	backoff        *exponentialBackoff
 }
 
 type httpClient interface {
@@ -52,7 +58,73 @@ const (
 	announceErrorRetryInterval            = 5 * time.Minute
 	requestTimeout                        = 30 * time.Second
 	maxAddressChangesBetweenAnnouncements = 10
+	// Cache TTL constants
+	// defaultCacheTTL                       = 10 * time.Minute
+	// negativeCacheTTL                      = 2 * time.Minute
+	// Circuit breaker constants
+	circuitBreakerFailureThreshold        = 5
+	circuitBreakerRetryTimeout            = 1 * time.Minute
 )
+
+// circuitBreaker implements a simple circuit breaker pattern
+type circuitBreaker struct {
+	mut           sync.Mutex
+	failureCount  int
+	lastFailure   time.Time
+	timeout       time.Duration
+	failureThreshold int
+	open          bool
+}
+
+func newCircuitBreaker(failureThreshold int, timeout time.Duration) *circuitBreaker {
+	return &circuitBreaker{
+		failureThreshold: failureThreshold,
+		timeout:          timeout,
+	}
+}
+
+// Call executes the given function with circuit breaker protection
+func (cb *circuitBreaker) Call(fn func() error) error {
+	cb.mut.Lock()
+	
+	// Check if circuit breaker is open
+	if cb.open {
+		// Check if we should try to close it
+		if time.Since(cb.lastFailure) > cb.timeout {
+			cb.open = false
+			cb.failureCount = 0
+		} else {
+			cb.mut.Unlock()
+			return errors.New("circuit breaker is open")
+		}
+	}
+	
+	cb.mut.Unlock()
+	
+	// Execute the function
+	err := fn()
+	
+	cb.mut.Lock()
+	defer cb.mut.Unlock()
+	
+	if err != nil {
+		cb.failureCount++
+		cb.lastFailure = time.Now()
+		
+		// Check if we should open the circuit breaker
+		if cb.failureCount >= cb.failureThreshold {
+			cb.open = true
+			slog.Warn("Circuit breaker opened due to repeated failures", 
+				"failureCount", cb.failureCount,
+				"threshold", cb.failureThreshold)
+		}
+	} else {
+		// Success, reset failure count
+		cb.failureCount = 0
+	}
+	
+	return err
+}
 
 type announcement struct {
 	Addresses []string `json:"addresses"`
@@ -154,6 +226,8 @@ func NewGlobal(server string, cert tls.Certificate, addrList AddressLister, evLo
 		noAnnounce:     opts.noAnnounce,
 		noLookup:       opts.noLookup,
 		evLogger:       evLogger,
+		circuitBreaker: newCircuitBreaker(circuitBreakerFailureThreshold, circuitBreakerRetryTimeout),
+		backoff:        newExponentialBackoff(5, 1*time.Second, 30*time.Second),
 	}
 	if !opts.noAnnounce {
 		// If we are supposed to announce, it's an error until we've done so.
@@ -181,13 +255,28 @@ func (c *globalClient) Lookup(ctx context.Context, device protocol.DeviceID) (ad
 	q.Set("device", device.String())
 	qURL.RawQuery = q.Encode()
 
-	resp, err := c.queryClient.Get(ctx, qURL.String())
+	// Use circuit breaker for lookup requests
+	var resp *http.Response
+	err = c.circuitBreaker.Call(func() error {
+		var innerErr error
+		resp, innerErr = c.queryClient.Get(ctx, qURL.String())
+		if innerErr != nil {
+			slog.DebugContext(ctx, "globalClient.Lookup", "url", qURL, slogutil.Error(innerErr))
+			return innerErr
+		}
+		return nil
+	})
+
 	if err != nil {
-		slog.DebugContext(ctx, "globalClient.Lookup", "url", qURL, slogutil.Error(err))
+		// Use exponential backoff for retry delay on lookup failures
+		delay := c.backoff.NextDelay()
+		slog.DebugContext(ctx, "Using exponential backoff for lookup retry", "delay", delay)
 		return nil, err
 	}
+
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
 		slog.DebugContext(ctx, "globalClient.Lookup", "url", qURL, "status", resp.Status)
 		err := errors.New(resp.Status)
 		if secs, atoiErr := strconv.Atoi(resp.Header.Get("Retry-After")); atoiErr == nil && secs > 0 {
@@ -203,7 +292,6 @@ func (c *globalClient) Lookup(ctx context.Context, device protocol.DeviceID) (ad
 	if err != nil {
 		return nil, err
 	}
-	resp.Body.Close()
 
 	var ann announcement
 	err = json.Unmarshal(bs, &ann)
@@ -277,47 +365,55 @@ func (c *globalClient) sendAnnouncement(ctx context.Context, timer *time.Timer) 
 
 	slog.DebugContext(ctx, "send announcement", "server", c.server, "announcement", ann)
 
-	resp, err := c.announceClient.Post(ctx, c.server, "application/json", bytes.NewReader(postData))
-	if err != nil {
-		slog.DebugContext(ctx, "announce POST", "server", c.server, slogutil.Error(err))
-		c.setError(err)
-		timer.Reset(announceErrorRetryInterval)
-		return
-	}
-	slog.DebugContext(ctx, "announce POST", "server", c.server, "status", resp.Status)
-	resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+	// Use circuit breaker and exponential backoff for announcement
+	var serverRecommendedInterval time.Duration = -1
+	err := c.circuitBreaker.Call(func() error {
+		resp, err := c.announceClient.Post(ctx, c.server, "application/json", bytes.NewReader(postData))
+		if err != nil {
+			slog.DebugContext(ctx, "announce POST", "server", c.server, slogutil.Error(err))
+			return err
+		}
+		defer resp.Body.Close()
+		
 		slog.DebugContext(ctx, "announce POST", "server", c.server, "status", resp.Status)
-		c.setError(errors.New(resp.Status))
 
-		if h := resp.Header.Get("Retry-After"); h != "" {
-			// The server has a recommendation on when we should
-			// retry. Follow it.
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			slog.DebugContext(ctx, "announce POST", "server", c.server, "status", resp.Status)
+			return errors.New(resp.Status)
+		}
+
+		// Check for server-recommended reannouncement time
+		if h := resp.Header.Get("Reannounce-After"); h != "" {
 			if secs, err := strconv.Atoi(h); err == nil && secs > 0 {
-				slog.DebugContext(ctx, "server sets retry-after", "server", c.server, "seconds", secs)
-				timer.Reset(time.Duration(secs) * time.Second)
-				return
+				slog.DebugContext(ctx, "announce sets reannounce-after", "server", c.server, "seconds", secs)
+				serverRecommendedInterval = time.Duration(secs) * time.Second
 			}
 		}
 
-		timer.Reset(announceErrorRetryInterval)
+		return nil
+	})
+
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to send announcement", "server", c.server, "error", err)
+		c.setError(err)
+		
+		// Use exponential backoff for retry delay
+		delay := c.backoff.NextDelay()
+		slog.DebugContext(ctx, "Using exponential backoff for retry", "delay", delay)
+		timer.Reset(delay)
 		return
 	}
 
+	// Success, reset backoff
+	c.backoff.Reset()
 	c.setError(nil)
 
-	if h := resp.Header.Get("Reannounce-After"); h != "" {
-		// The server has a recommendation on when we should
-		// reannounce. Follow it.
-		if secs, err := strconv.Atoi(h); err == nil && secs > 0 {
-			slog.DebugContext(ctx, "announce sets reannounce-after", "server", c.server, "seconds", secs)
-			timer.Reset(time.Duration(secs) * time.Second)
-			return
-		}
+	// Use server-recommended interval if provided, otherwise default
+	if serverRecommendedInterval > 0 {
+		timer.Reset(serverRecommendedInterval)
+	} else {
+		timer.Reset(defaultReannounceInterval)
 	}
-
-	timer.Reset(defaultReannounceInterval)
 }
 
 func (*globalClient) Cache() map[protocol.DeviceID]CacheEntry {
@@ -461,6 +557,56 @@ func (c *contextClient) Post(ctx context.Context, url, ctype string, data io.Rea
 	}
 	req.Header.Set("Content-Type", ctype)
 	return c.Client.Do(req)
+}
+
+type exponentialBackoff struct {
+	mut        sync.Mutex
+	attempts   int
+	maxRetries int
+	baseDelay  time.Duration
+	maxDelay   time.Duration
+}
+
+func newExponentialBackoff(maxRetries int, baseDelay, maxDelay time.Duration) *exponentialBackoff {
+	return &exponentialBackoff{
+		maxRetries: maxRetries,
+		baseDelay:  baseDelay,
+		maxDelay:   maxDelay,
+	}
+}
+
+// NextDelay calculates the next delay based on exponential backoff
+func (eb *exponentialBackoff) NextDelay() time.Duration {
+	eb.mut.Lock()
+	defer eb.mut.Unlock()
+	
+	if eb.attempts >= eb.maxRetries {
+		return eb.maxDelay
+	}
+	
+	delay := time.Duration(float64(eb.baseDelay) * pow(2, float64(eb.attempts)))
+	if delay > eb.maxDelay {
+		delay = eb.maxDelay
+	}
+	
+	eb.attempts++
+	return delay
+}
+
+// Reset resets the backoff counter
+func (eb *exponentialBackoff) Reset() {
+	eb.mut.Lock()
+	defer eb.mut.Unlock()
+	eb.attempts = 0
+}
+
+// pow calculates base^exp efficiently
+func pow(base, exp float64) float64 {
+	result := 1.0
+	for i := 0; i < int(exp); i++ {
+		result *= base
+	}
+	return result
 }
 
 func globalDiscoveryIdentity(addr string) string {

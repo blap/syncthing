@@ -91,8 +91,12 @@ func TestCompleteConnectionManagementSystem(t *testing.T) {
 
 		// Then the LAN connection should be selected as best due to health boost
 		bestConn := scheduler.SelectConnection(deviceID)
-		if bestConn != lanConn {
-			t.Errorf("Expected LAN connection to be selected as best, got %v", bestConn.ConnectionID())
+		if bestConn != nil {
+			if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != lanConn {
+				t.Errorf("Expected LAN connection to be selected as best, got %v", bestConn.ConnectionID())
+			}
+		} else {
+			t.Error("Expected a connection to be selected, got nil")
 		}
 
 		// When we degrade the LAN connection
@@ -100,8 +104,12 @@ func TestCompleteConnectionManagementSystem(t *testing.T) {
 
 		// Then the WAN connection should be selected as best
 		bestConn = scheduler.SelectConnection(deviceID)
-		if bestConn != wanConn {
-			t.Errorf("Expected WAN connection to be selected after LAN degradation, got %v", bestConn.ConnectionID())
+		if bestConn != nil {
+			if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != wanConn {
+				t.Errorf("Expected WAN connection to be selected after LAN degradation, got %v", bestConn.ConnectionID())
+			}
+		} else {
+			t.Error("Expected a connection to be selected, got nil")
 		}
 
 		// When we improve the LAN connection
@@ -109,8 +117,12 @@ func TestCompleteConnectionManagementSystem(t *testing.T) {
 
 		// Then the LAN connection should be selected again
 		bestConn = scheduler.SelectConnection(deviceID)
-		if bestConn != lanConn {
-			t.Errorf("Expected LAN connection to be selected after recovery, got %v", bestConn.ConnectionID())
+		if bestConn != nil {
+			if castConn, ok := bestConn.(*EnhancedMockConnection); !ok || castConn != lanConn {
+				t.Errorf("Expected LAN connection to be selected after recovery, got %v", bestConn.ConnectionID())
+			}
+		} else {
+			t.Error("Expected a connection to be selected, got nil")
 		}
 	})
 

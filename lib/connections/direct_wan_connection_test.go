@@ -220,7 +220,7 @@ func TestDirectWANConnection(t *testing.T) {
 }
 
 // generateWANTestCertificate generates a test certificate for a device
-func generateWANTestCertificate(t *testing.T, deviceID protocol.DeviceID) tls.Certificate {
+func generateWANTestCertificate(t *testing.T, _ protocol.DeviceID) tls.Certificate {
 	// Generate a new RSA private key
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

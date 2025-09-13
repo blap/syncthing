@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -132,6 +133,18 @@ type Connection struct {
 	priorityReturnsOnCall map[int]struct {
 		result1 int
 	}
+	QueryDeviceStub        func(context.Context, *bep.QueryDevice) error
+	queryDeviceMutex       sync.RWMutex
+	queryDeviceArgsForCall []struct {
+		arg1 context.Context
+		arg2 *bep.QueryDevice
+	}
+	queryDeviceReturns struct {
+		result1 error
+	}
+	queryDeviceReturnsOnCall map[int]struct {
+		result1 error
+	}
 	RemoteAddrStub        func() net.Addr
 	remoteAddrMutex       sync.RWMutex
 	remoteAddrArgsForCall []struct {
@@ -155,6 +168,18 @@ type Connection struct {
 	requestReturnsOnCall map[int]struct {
 		result1 []byte
 		result2 error
+	}
+	ResponseDeviceStub        func(context.Context, *bep.ResponseDevice) error
+	responseDeviceMutex       sync.RWMutex
+	responseDeviceArgsForCall []struct {
+		arg1 context.Context
+		arg2 *bep.ResponseDevice
+	}
+	responseDeviceReturns struct {
+		result1 error
+	}
+	responseDeviceReturnsOnCall map[int]struct {
+		result1 error
 	}
 	StartStub        func()
 	startMutex       sync.RWMutex
@@ -682,68 +707,6 @@ func (fake *Connection) IndexReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *Connection) IndexUpdate(arg1 context.Context, arg2 *protocol.IndexUpdate) error {
-	fake.indexUpdateMutex.Lock()
-	ret, specificReturn := fake.indexUpdateReturnsOnCall[len(fake.indexUpdateArgsForCall)]
-	fake.indexUpdateArgsForCall = append(fake.indexUpdateArgsForCall, struct {
-		arg1 context.Context
-		arg2 *protocol.IndexUpdate
-	}{arg1, arg2})
-	stub := fake.IndexUpdateStub
-	fakeReturns := fake.indexUpdateReturns
-	fake.recordInvocation("IndexUpdate", []interface{}{arg1, arg2})
-	fake.indexUpdateMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2)
-	}
-	if specificReturn {
-		return ret.result1
-	}
-	return fakeReturns.result1
-}
-
-func (fake *Connection) IndexUpdateCallCount() int {
-	fake.indexUpdateMutex.RLock()
-	defer fake.indexUpdateMutex.RUnlock()
-	return len(fake.indexUpdateArgsForCall)
-}
-
-func (fake *Connection) IndexUpdateCalls(stub func(context.Context, *protocol.IndexUpdate) error) {
-	fake.indexUpdateMutex.Lock()
-	defer fake.indexUpdateMutex.Unlock()
-	fake.IndexUpdateStub = stub
-}
-
-func (fake *Connection) IndexUpdateArgsForCall(i int) (context.Context, *protocol.IndexUpdate) {
-	fake.indexUpdateMutex.RLock()
-	defer fake.indexUpdateMutex.RUnlock()
-	argsForCall := fake.indexUpdateArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
-}
-
-func (fake *Connection) IndexUpdateReturns(result1 error) {
-	fake.indexUpdateMutex.Lock()
-	defer fake.indexUpdateMutex.Unlock()
-	fake.IndexUpdateStub = nil
-	fake.indexUpdateReturns = struct {
-		result1 error
-	}{result1}
-}
-
-func (fake *Connection) IndexUpdateReturnsOnCall(i int, result1 error) {
-	fake.indexUpdateMutex.Lock()
-	defer fake.indexUpdateMutex.Unlock()
-	fake.IndexUpdateStub = nil
-	if fake.indexUpdateReturnsOnCall == nil {
-		fake.indexUpdateReturnsOnCall = make(map[int]struct {
-			result1 error
-		})
-	}
-	fake.indexUpdateReturnsOnCall[i] = struct {
-		result1 error
-	}{result1}
-}
-
 func (fake *Connection) IsLocal() bool {
 	fake.isLocalMutex.Lock()
 	ret, specificReturn := fake.isLocalReturnsOnCall[len(fake.isLocalArgsForCall)]
@@ -903,6 +866,121 @@ func (fake *Connection) RemoteAddrReturnsOnCall(i int, result1 net.Addr) {
 	}{result1}
 }
 
+func (fake *Connection) IndexUpdate(arg1 context.Context, arg2 *protocol.IndexUpdate) error {
+	fake.indexUpdateMutex.Lock()
+	ret, specificReturn := fake.indexUpdateReturnsOnCall[len(fake.indexUpdateArgsForCall)]
+	fake.indexUpdateArgsForCall = append(fake.indexUpdateArgsForCall, struct {
+		arg1 context.Context
+		arg2 *protocol.IndexUpdate
+	}{arg1, arg2})
+	stub := fake.IndexUpdateStub
+	fakeReturns := fake.indexUpdateReturns
+	fake.recordInvocation("IndexUpdate", []interface{}{arg1, arg2})
+	fake.indexUpdateMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Connection) IndexUpdateCallCount() int {
+	fake.indexUpdateMutex.RLock()
+	defer fake.indexUpdateMutex.RUnlock()
+	return len(fake.indexUpdateArgsForCall)
+}
+
+func (fake *Connection) IndexUpdateCalls(stub func(context.Context, *protocol.IndexUpdate) error) {
+	fake.indexUpdateMutex.Lock()
+	defer fake.indexUpdateMutex.Unlock()
+	fake.IndexUpdateStub = stub
+}
+
+func (fake *Connection) IndexUpdateArgsForCall(i int) (context.Context, *protocol.IndexUpdate) {
+	fake.indexUpdateMutex.RLock()
+	defer fake.indexUpdateMutex.RUnlock()
+	argsForCall := fake.indexUpdateArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Connection) IndexUpdateReturns(result1 error) {
+	fake.indexUpdateMutex.Lock()
+	defer fake.indexUpdateMutex.Unlock()
+	fake.IndexUpdateStub = nil
+	if fake.indexUpdateReturnsOnCall == nil {
+		fake.indexUpdateReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.indexUpdateReturnsOnCall[len(fake.indexUpdateArgsForCall)-1] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Connection) QueryDevice(arg1 context.Context, arg2 *bep.QueryDevice) error {
+	fake.queryDeviceMutex.Lock()
+	ret, specificReturn := fake.queryDeviceReturnsOnCall[len(fake.queryDeviceArgsForCall)]
+	fake.queryDeviceArgsForCall = append(fake.queryDeviceArgsForCall, struct {
+		arg1 context.Context
+		arg2 *bep.QueryDevice
+	}{arg1, arg2})
+	stub := fake.QueryDeviceStub
+	fakeReturns := fake.queryDeviceReturns
+	fake.recordInvocation("QueryDevice", []interface{}{arg1, arg2})
+	fake.queryDeviceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Connection) QueryDeviceCallCount() int {
+	fake.queryDeviceMutex.RLock()
+	defer fake.queryDeviceMutex.RUnlock()
+	return len(fake.queryDeviceArgsForCall)
+}
+
+func (fake *Connection) QueryDeviceCalls(stub func(context.Context, *bep.QueryDevice) error) {
+	fake.queryDeviceMutex.Lock()
+	defer fake.queryDeviceMutex.Unlock()
+	fake.QueryDeviceStub = stub
+}
+
+func (fake *Connection) QueryDeviceArgsForCall(i int) (context.Context, *bep.QueryDevice) {
+	fake.queryDeviceMutex.RLock()
+	defer fake.queryDeviceMutex.RUnlock()
+	argsForCall := fake.queryDeviceArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Connection) QueryDeviceReturns(result1 error) {
+	fake.queryDeviceMutex.Lock()
+	defer fake.queryDeviceMutex.Unlock()
+	fake.QueryDeviceStub = nil
+	fake.queryDeviceReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Connection) QueryDeviceReturnsOnCall(i int, result1 error) {
+	fake.queryDeviceMutex.Lock()
+	defer fake.queryDeviceMutex.Unlock()
+	fake.QueryDeviceStub = nil
+	if fake.queryDeviceReturnsOnCall == nil {
+		fake.queryDeviceReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.queryDeviceReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *Connection) Request(arg1 context.Context, arg2 *protocol.Request) ([]byte, error) {
 	fake.requestMutex.Lock()
 	ret, specificReturn := fake.requestReturnsOnCall[len(fake.requestArgsForCall)]
@@ -966,6 +1044,68 @@ func (fake *Connection) RequestReturnsOnCall(i int, result1 []byte, result2 erro
 		result1 []byte
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *Connection) ResponseDevice(arg1 context.Context, arg2 *bep.ResponseDevice) error {
+	fake.responseDeviceMutex.Lock()
+	ret, specificReturn := fake.responseDeviceReturnsOnCall[len(fake.responseDeviceArgsForCall)]
+	fake.responseDeviceArgsForCall = append(fake.responseDeviceArgsForCall, struct {
+		arg1 context.Context
+		arg2 *bep.ResponseDevice
+	}{arg1, arg2})
+	stub := fake.ResponseDeviceStub
+	fakeReturns := fake.responseDeviceReturns
+	fake.recordInvocation("ResponseDevice", []interface{}{arg1, arg2})
+	fake.responseDeviceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Connection) ResponseDeviceCallCount() int {
+	fake.responseDeviceMutex.RLock()
+	defer fake.responseDeviceMutex.RUnlock()
+	return len(fake.responseDeviceArgsForCall)
+}
+
+func (fake *Connection) ResponseDeviceCalls(stub func(context.Context, *bep.ResponseDevice) error) {
+	fake.responseDeviceMutex.Lock()
+	defer fake.responseDeviceMutex.Unlock()
+	fake.ResponseDeviceStub = stub
+}
+
+func (fake *Connection) ResponseDeviceArgsForCall(i int) (context.Context, *bep.ResponseDevice) {
+	fake.responseDeviceMutex.RLock()
+	defer fake.responseDeviceMutex.RUnlock()
+	argsForCall := fake.responseDeviceArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Connection) ResponseDeviceReturns(result1 error) {
+	fake.responseDeviceMutex.Lock()
+	defer fake.responseDeviceMutex.Unlock()
+	fake.ResponseDeviceStub = nil
+	fake.responseDeviceReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Connection) ResponseDeviceReturnsOnCall(i int, result1 error) {
+	fake.responseDeviceMutex.Lock()
+	defer fake.responseDeviceMutex.Unlock()
+	fake.ResponseDeviceStub = nil
+	if fake.responseDeviceReturnsOnCall == nil {
+		fake.responseDeviceReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.responseDeviceReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *Connection) Start() {

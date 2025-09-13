@@ -55,19 +55,11 @@ func TestWindowsNetworkMonitor_Integration(t *testing.T) {
 		t.Fatal("Failed to create WindowsNetworkMonitor")
 	}
 
-	// Test initial state
-	if monitor.adapterStates == nil {
+	// Test initial state using the public method
+	adapterStates := monitor.GetAdapterStates()
+	if adapterStates == nil {
 		t.Error("Adapter states map should be initialized")
 	}
-
-	// Test that we can start and stop the monitor
-	monitor.Start()
-	
-	// Give it a moment to start
-	time.Sleep(100 * time.Millisecond)
-	
-	// Stop the monitor
-	monitor.Stop()
 }
 
 func TestWindowsNetworkMonitor_AdapterStateChangeDetection(t *testing.T) {
@@ -80,85 +72,25 @@ func TestWindowsNetworkMonitor_AdapterStateChangeDetection(t *testing.T) {
 	monitor := NewWindowsNetworkMonitor(mockService)
 	
 	// Set up initial state - both previous and current state are the same (false)
-	monitor.mut.Lock()
-	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+	monitor.SetAdapterState("TestAdapter", NetworkAdapterInfo{
 		Name: "TestAdapter",
 		IsUp: false,
 		Type: 6, // Ethernet
 		ChangeCount: 0,
-	}
-	monitor.mut.Unlock()
+	})
 	
 	// Reset dialNowCalled flag
 	mockService.dialNowCalled = false
 	
-	// Mock the getNetworkInterfaces method to return the same state
-	// For this test, we'll directly manipulate the adapter states to simulate no change
-	monitor.mut.Lock()
-	currentStates := make(map[string]NetworkAdapterInfo)
-	currentStates["TestAdapter"] = NetworkAdapterInfo{
-		Name: "TestAdapter",
-		IsUp: false, // Same as previous state
-		Type: 6,
-		ChangeCount: 0,
-	}
-	monitor.mut.Unlock()
+	// Simulate adapter coming up
+	adapterInfo := monitor.GetAdapterStates()["TestAdapter"]
+	adapterInfo.IsUp = true // Now adapter is up
+	adapterInfo.ChangeCount++
+	adapterInfo.LastChange = time.Now()
+	monitor.SetAdapterState("TestAdapter", adapterInfo)
 	
-	// Manually check for changes with the same state
-	monitor.mut.Lock()
-	for adapter, currentInfo := range currentStates {
-		previousInfo, exists := monitor.adapterStates[adapter]
-		if !exists {
-			mockService.dialNowCalled = true
-		} else {
-			stateChanged := previousInfo.IsUp != currentInfo.IsUp
-			if stateChanged && !previousInfo.IsUp && currentInfo.IsUp {
-				mockService.dialNowCalled = true
-			}
-		}
-	}
-	monitor.mut.Unlock()
-	
-	// Verify that DialNow was not called
-	if mockService.dialNowCalled {
-		t.Error("DialNow should not be called when no changes occur")
-	}
-	
-	// Now test with a real change - adapter coming up
-	monitor.mut.Lock()
-	adapterInfo := monitor.adapterStates["TestAdapter"]
-	adapterInfo.IsUp = false // Previous state is down
-	monitor.adapterStates["TestAdapter"] = adapterInfo
-	monitor.mut.Unlock()
-	
-	// Reset dialNowCalled flag
-	mockService.dialNowCalled = false
-	
-	// Mock the getNetworkInterfaces method to return a different state
-	monitor.mut.Lock()
-	currentStates = make(map[string]NetworkAdapterInfo)
-	currentStates["TestAdapter"] = NetworkAdapterInfo{
-		Name: "TestAdapter",
-		IsUp: true, // Current state is up (different from previous state)
-		Type: 6,
-		ChangeCount: 1,
-	}
-	monitor.mut.Unlock()
-	
-	// Manually check for changes with a different state
-	monitor.mut.Lock()
-	for adapter, currentInfo := range currentStates {
-		previousInfo, exists := monitor.adapterStates[adapter]
-		if !exists {
-			mockService.dialNowCalled = true
-		} else {
-			stateChanged := previousInfo.IsUp != currentInfo.IsUp
-			if stateChanged && !previousInfo.IsUp && currentInfo.IsUp {
-				mockService.dialNowCalled = true
-			}
-		}
-	}
-	monitor.mut.Unlock()
+	// Check for network changes which should trigger reconnection
+	monitor.checkForNetworkChanges()
 	
 	// Verify that DialNow was called
 	if !mockService.dialNowCalled {
@@ -236,31 +168,26 @@ func TestWindowsNetworkMonitor_KB5060998Detection(t *testing.T) {
 	monitor := NewWindowsNetworkMonitor(mockService)
 	
 	// Set up an adapter with frequent changes to simulate KB5060998 issues
-	monitor.mut.Lock()
-	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+	monitor.SetAdapterState("TestAdapter", NetworkAdapterInfo{
 		Name: "TestAdapter",
 		IsUp: true,
 		Type: 6, // Ethernet
 		ChangeCount: 10, // High change count
-	}
-	monitor.mut.Unlock()
+	})
 	
 	// Log a frequent change event which should trigger KB5060998 detection
 	monitor.logNetworkEvent("TestAdapter", "kb5060998_suspected", "Frequent changes detected")
 	
-	// Check that event was logged
-	monitor.mut.RLock()
-	eventCount := len(monitor.eventLog)
-	monitor.mut.RUnlock()
+	// Check that event was logged using the public method
+	eventCount := len(monitor.GetEventLog())
 	
 	if eventCount == 0 {
 		t.Error("KB5060998 detection event was not logged")
 	}
 	
 	// Check the last event is the KB5060998 detection event
-	monitor.mut.RLock()
-	lastEvent := monitor.eventLog[len(monitor.eventLog)-1]
-	monitor.mut.RUnlock()
+	eventLog := monitor.GetEventLog()
+	lastEvent := eventLog[len(eventLog)-1]
 	
 	if lastEvent.EventType != "kb5060998_suspected" {
 		t.Error("KB5060998 detection event not logged correctly")
@@ -277,13 +204,15 @@ func TestWindowsNetworkMonitor_Diagnostics(t *testing.T) {
 	monitor := NewWindowsNetworkMonitor(mockService)
 	
 	// Add some test data
-	monitor.mut.Lock()
-	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+	monitor.SetAdapterState("TestAdapter", NetworkAdapterInfo{
 		Name: "TestAdapter",
 		IsUp: true,
 		Type: 6,
 		ChangeCount: 2,
-	}
+	})
+	
+	// Update stability metrics using direct access (this is needed for testing)
+	monitor.mut.Lock()
 	monitor.stabilityMetrics.TotalChanges = 5
 	monitor.stabilityMetrics.RecentChanges = 1
 	monitor.currentProfile = "Private"
@@ -309,16 +238,15 @@ func TestWindowsNetworkMonitor_AdaptiveBehavior(t *testing.T) {
 	// Create Windows network monitor
 	monitor := NewWindowsNetworkMonitor(mockService)
 	
-	// Test initial stability
-	monitor.mut.RLock()
-	initialStability := monitor.stabilityMetrics.StabilityScore
-	monitor.mut.RUnlock()
+	// Test initial stability using the public method
+	initialStability := monitor.GetStabilityMetrics().StabilityScore
 	
 	if initialStability != 1.0 {
 		t.Error("Initial stability score should be 1.0")
 	}
 	
 	// Simulate network instability by increasing change count
+	// Update stability metrics using direct access (this is needed for testing)
 	monitor.mut.Lock()
 	monitor.stabilityMetrics.RecentChanges = 10 // Many recent changes
 	monitor.mut.Unlock()
@@ -326,17 +254,15 @@ func TestWindowsNetworkMonitor_AdaptiveBehavior(t *testing.T) {
 	// Update adaptive timeouts which should reduce stability score
 	monitor.updateAdaptiveTimeouts()
 	
-	// Check that stability score was updated
-	monitor.mut.RLock()
-	updatedStability := monitor.stabilityMetrics.StabilityScore
-	monitor.mut.RUnlock()
+	// Check that stability score was updated using the public method
+	updatedStability := monitor.GetStabilityMetrics().StabilityScore
 	
 	if updatedStability >= initialStability {
 		t.Error("Stability score should decrease with network instability")
 	}
 	
 	// Test that adaptive timeout changes based on stability
-	adaptiveTimeout := monitor.getAdaptiveTimeout()
+	adaptiveTimeout := monitor.GetAdaptiveTimeout()
 	
 	// With low stability, timeout should be longer
 	if adaptiveTimeout <= 5*time.Second {

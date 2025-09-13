@@ -144,6 +144,9 @@ func (w *DefensiveWindowsNetworkMonitor) monitorNetworkChanges() {
 				ticker.Reset(w.scanInterval)
 				slog.Debug("Adjusted scan interval", "newInterval", w.scanInterval)
 			}
+			
+			// Update adaptive timeouts based on network stability
+			w.updateAdaptiveTimeouts()
 		}
 	}
 }
@@ -255,7 +258,7 @@ func (w *DefensiveWindowsNetworkMonitor) GetNetworkProfile() string {
 		}
 	}()
 
-	// Try to get the network profile using safe heuristics
+	// Try to get the network profile using enhanced safe heuristics
 	profile := w.getNetworkProfileSafely()
 	if profile == "" {
 		// Fallback to a default value
@@ -263,6 +266,60 @@ func (w *DefensiveWindowsNetworkMonitor) GetNetworkProfile() string {
 		return "Unknown"
 	}
 	return profile
+}
+
+// GetAdapterStates returns a copy of the current adapter states for testing purposes
+func (w *DefensiveWindowsNetworkMonitor) GetAdapterStates() map[string]NetworkAdapterInfo {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	
+	// Create a copy to avoid race conditions
+	states := make(map[string]NetworkAdapterInfo)
+	for k, v := range w.adapterStates {
+		states[k] = v
+	}
+	return states
+}
+
+// GetStabilityMetrics returns a copy of the current stability metrics for testing purposes
+func (w *DefensiveWindowsNetworkMonitor) GetStabilityMetrics() NetworkStabilityMetrics {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	
+	// Return a copy
+	return *w.stabilityMetrics
+}
+
+// GetEventLog returns a copy of the event log for testing purposes
+func (w *DefensiveWindowsNetworkMonitor) GetEventLog() []NetworkChangeEvent {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	
+	// Create a copy to avoid race conditions
+	log := make([]NetworkChangeEvent, len(w.eventLog))
+	copy(log, w.eventLog)
+	return log
+}
+
+// GetMaxEventLogSize returns the maximum event log size for testing purposes
+func (w *DefensiveWindowsNetworkMonitor) GetMaxEventLogSize() int {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	return w.maxEventLogSize
+}
+
+// SetAdapterState allows tests to set adapter states directly
+func (w *DefensiveWindowsNetworkMonitor) SetAdapterState(name string, info NetworkAdapterInfo) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+	w.adapterStates[name] = info
+}
+
+// GetAdaptiveTimeout returns the current adaptive timeout for testing purposes
+func (w *DefensiveWindowsNetworkMonitor) GetAdaptiveTimeout() time.Duration {
+	w.mut.RLock()
+	defer w.mut.RUnlock()
+	return w.stabilityMetrics.AdaptiveTimeout
 }
 
 // getNetworkProfileSafely retrieves the network profile using safe heuristics
@@ -314,87 +371,6 @@ func containsAny(s string, substrings []string) bool {
 		}
 	}
 	return false
-}
-
-// handleRealTimeNotifications handles real-time network change notifications (stub implementation)
-func (w *DefensiveWindowsNetworkMonitor) handleRealTimeNotifications() {
-	defer w.wg.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Recovered from panic in handleRealTimeNotifications", "panic", r)
-		}
-	}()
-	
-	// This is a stub implementation - real-time notifications are disabled for safety
-	// In a full implementation, this would handle real-time notifications
-	
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		default:
-			// Sleep and periodically check
-			time.Sleep(1 * time.Second)
-		}
-	}
-}
-
-// adjustAdaptiveTimeouts periodically adjusts timeouts based on network stability
-func (w *DefensiveWindowsNetworkMonitor) adjustAdaptiveTimeouts() {
-	defer w.wg.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Recovered from panic in adjustAdaptiveTimeouts", "panic", r)
-		}
-	}()
-	
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case <-ticker.C:
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("Recovered from panic in updateAdaptiveTimeouts", "panic", r)
-					}
-				}()
-				w.updateAdaptiveTimeouts()
-			}()
-		}
-	}
-}
-
-// logDiagnosticsPeriodically logs diagnostics periodically for monitoring
-func (w *DefensiveWindowsNetworkMonitor) logDiagnosticsPeriodically() {
-	defer w.wg.Done()
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("Recovered from panic in logDiagnosticsPeriodically", "panic", r)
-		}
-	}()
-	
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case <-ticker.C:
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("Recovered from panic in logDiagnostics", "panic", r)
-					}
-				}()
-				w.logDiagnostics()
-			}()
-		}
-	}
 }
 
 // checkForNetworkChanges compares current adapter states with previous states

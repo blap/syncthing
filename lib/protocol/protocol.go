@@ -96,19 +96,19 @@ type Model interface {
 }
 
 // QueryDeviceHandler is an optional interface that models can implement to handle QueryDevice messages
-// type QueryDeviceHandler interface {
-// 	HandleQueryDevice(query *bep.QueryDevice) error
-// }
+type QueryDeviceHandler interface {
+	HandleQueryDevice(query *bep.QueryDevice) error
+}
 
 // QueryDeviceHandlerWithConn is an optional interface that models can implement to handle QueryDevice messages with connection context
-// type QueryDeviceHandlerWithConn interface {
-// 	HandleQueryDevice(conn Connection, query *bep.QueryDevice) error
-// }
+type QueryDeviceHandlerWithConn interface {
+	HandleQueryDevice(conn Connection, query *bep.QueryDevice) error
+}
 
 // ResponseDeviceHandler is an optional interface that models can implement to handle ResponseDevice messages
-// type ResponseDeviceHandler interface {
-// 	HandleResponseDevice(response *bep.ResponseDevice) error
-// }
+type ResponseDeviceHandler interface {
+	HandleResponseDevice(response *bep.ResponseDevice) error
+}
 
 // rawModel is the Model interface, but without the initial Connection
 // parameter. Internal use only.
@@ -159,11 +159,11 @@ type Connection interface {
 
 	// Send a Query Device message to the peer device to ask for addresses
 	// of a specific device.
-	// QueryDevice(ctx context.Context, query *bep.QueryDevice) error
+	QueryDevice(ctx context.Context, query *bep.QueryDevice) error
 
 	// Send a Response Device message to the peer device with addresses
 	// for a specific device.
-	// ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error
+	ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error
 
 	Start()
 	Close(err error)
@@ -537,30 +537,34 @@ func (c *rawConnection) DownloadProgress(ctx context.Context, dp *DownloadProgre
 }
 
 // QueryDevice sends a QueryDevice message to the peer device
-// func (c *rawConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
-// 	select {
-// 	case <-c.closed:
-// 		return ErrClosed
-// 	case <-ctx.Done():
-// 		return ctx.Err()
-// 	default:
-// 	}
-// 	c.send(ctx, query, nil)
-// 	return nil
-// }
+func (c *rawConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+	select {
+	case <-c.closed:
+		return ErrClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if !c.send(ctx, query, nil) {
+		return ErrClosed
+	}
+	return nil
+}
 
 // ResponseDevice sends a ResponseDevice message to the peer device
-// func (c *rawConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
-// 	select {
-// 	case <-c.closed:
-// 		return ErrClosed
-// 	case <-ctx.Done():
-// 		return ctx.Err()
-// 	default:
-// 	}
-// 	c.send(ctx, response, nil)
-// 	return nil
-// }
+func (c *rawConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+	select {
+	case <-c.closed:
+		return ErrClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if !c.send(ctx, response, nil) {
+		return ErrClosed
+	}
+	return nil
+}
 
 func (c *rawConnection) ping() bool {
 	// Record timestamp when ping is sent if we have a health monitor
@@ -683,13 +687,25 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 			c.lastPingReceiveTime = time.Now()
 			c.pingStatsMut.Unlock()
 
-			// case *bep.QueryDevice:
-			// 	// Handle QueryDevice message
-			// 	err = c.model.HandleQueryDevice(msg)
+		case *bep.QueryDevice:
+			// Handle QueryDevice message
+			// Check if the model implements the optional QueryDeviceHandler interface
+			if handler, ok := c.model.(interface{ HandleQueryDevice(*bep.QueryDevice) error }); ok {
+				err = handler.HandleQueryDevice(msg)
+			} else {
+				// Model doesn't implement the handler, ignore the message
+				l.Debugf("QueryDevice message received but model doesn't implement handler")
+			}
 
-			// case *bep.ResponseDevice:
-			// 	// Handle ResponseDevice message
-			// 	err = c.model.HandleResponseDevice(msg)
+		case *bep.ResponseDevice:
+			// Handle ResponseDevice message
+			// Check if the model implements the optional ResponseDeviceHandler interface
+			if handler, ok := c.model.(interface{ HandleResponseDevice(*bep.ResponseDevice) error }); ok {
+				err = handler.HandleResponseDevice(msg)
+			} else {
+				// Model doesn't implement the handler, ignore the message
+				l.Debugf("ResponseDevice message received but model doesn't implement handler")
+			}
 		}
 		if err != nil {
 			return newHandleError(err, msgContext)
@@ -1082,10 +1098,10 @@ func typeOf(msg proto.Message) bep.MessageType {
 		return bep.MessageType_MESSAGE_TYPE_PING
 	case *bep.Close:
 		return bep.MessageType_MESSAGE_TYPE_CLOSE
-	// case *bep.QueryDevice:
-	// 	return bep.MessageType_MESSAGE_TYPE_QUERY_DEVICE
-	// case *bep.ResponseDevice:
-	// 	return bep.MessageType_MESSAGE_TYPE_RESPONSE_DEVICE
+	case *bep.QueryDevice:
+		return bep.MessageType_MESSAGE_TYPE_QUERY_DEVICE
+	case *bep.ResponseDevice:
+		return bep.MessageType_MESSAGE_TYPE_RESPONSE_DEVICE
 	default:
 		panic("bug: unknown message type")
 	}
@@ -1109,10 +1125,10 @@ func newMessage(t bep.MessageType) (proto.Message, error) {
 		return new(bep.Ping), nil
 	case bep.MessageType_MESSAGE_TYPE_CLOSE:
 		return new(bep.Close), nil
-	// case bep.MessageType_MESSAGE_TYPE_QUERY_DEVICE:
-	// 	return new(bep.QueryDevice), nil
-	// case bep.MessageType_MESSAGE_TYPE_RESPONSE_DEVICE:
-	// 	return new(bep.ResponseDevice), nil
+	case bep.MessageType_MESSAGE_TYPE_QUERY_DEVICE:
+		return new(bep.QueryDevice), nil
+	case bep.MessageType_MESSAGE_TYPE_RESPONSE_DEVICE:
+		return new(bep.ResponseDevice), nil
 	default:
 		return nil, errUnknownMessage
 	}

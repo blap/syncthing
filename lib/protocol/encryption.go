@@ -282,6 +282,16 @@ func (e encryptedConnection) GetPingLossRate() float64 {
 	return e.conn.GetPingLossRate()
 }
 
+// QueryDevice sends a QueryDevice message to the peer device
+func (e encryptedConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+	return e.conn.QueryDevice(ctx, query)
+}
+
+// ResponseDevice sends a ResponseDevice message to the peer device
+func (e encryptedConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+	return e.conn.ResponseDevice(ctx, response)
+}
+
 func encryptFileInfos(keyGen *KeyGenerator, files []FileInfo, folderKey *[keySize]byte) {
 	for i, fi := range files {
 		files[i] = encryptFileInfo(keyGen, fi, folderKey)
@@ -708,9 +718,5 @@ func (r *folderKeyRegistry) setPasswords(keyGen *KeyGenerator, passwords map[str
 	r.keys = keysFromPasswords(keyGen, passwords)
 	r.mut.Unlock()
 }
-
-
-
-
 
 

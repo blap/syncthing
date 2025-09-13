@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/internal/timeutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	protocolmocks "github.com/syncthing/syncthing/lib/protocol/mocks"
@@ -160,6 +161,16 @@ func (f *fakeConnection) sendIndexUpdate() {
 // GetPingLossRate returns the current ping packet loss rate as a percentage
 func (f *fakeConnection) GetPingLossRate() float64 {
 	return 0.0 // Default implementation for fake connection
+}
+
+// QueryDevice sends a QueryDevice message to the peer device
+func (f *fakeConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+	return nil
+}
+
+// ResponseDevice sends a ResponseDevice message to the peer device
+func (f *fakeConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+	return nil
 }
 
 func addFakeConn(m *testModel, dev protocol.DeviceID, folderID string) *fakeConnection {

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/thejerf/suture/v4"
@@ -38,6 +39,8 @@ type cast struct {
 	outbox  chan recv
 	inbox   chan []byte
 	stopped chan struct{}
+	err     error
+	errMut  sync.Mutex
 }
 
 // newCast creates a base object for multi- or broadcasting. Afterwards the
@@ -63,21 +66,13 @@ func newCast(name string) *cast {
 }
 
 func (c *cast) addReader(svc func(context.Context) error) {
-	c.reader = c.createService(svc, "reader")
+	c.reader = svcutil.AsService(svc, fmt.Sprintf("%s/reader", c.name))
 	c.Add(c.reader)
 }
 
-func (c *cast) addWriter(svc func(ctx context.Context) error) {
-	c.writer = c.createService(svc, "writer")
+func (c *cast) addWriter(svc func(context.Context) error) {
+	c.writer = svcutil.AsService(svc, fmt.Sprintf("%s/writer", c.name))
 	c.Add(c.writer)
-}
-
-func (c *cast) createService(svc func(context.Context) error, suffix string) svcutil.ServiceWithError {
-	return svcutil.AsService(svc, fmt.Sprintf("%s/%s", c, suffix))
-}
-
-func (c *cast) String() string {
-	return fmt.Sprintf("%s@%p", c.name, c)
 }
 
 func (c *cast) Send(data []byte) {
@@ -89,16 +84,19 @@ func (c *cast) Send(data []byte) {
 
 func (c *cast) Recv() ([]byte, net.Addr) {
 	select {
-	case recv := <-c.outbox:
-		return recv.data, recv.src
+	case r := <-c.outbox:
+		return r.data, r.src
 	case <-c.stopped:
+		return nil, nil
 	}
-	return nil, nil
 }
 
 func (c *cast) Error() error {
-	if err := c.reader.Error(); err != nil {
-		return err
-	}
-	return c.writer.Error()
+	c.errMut.Lock()
+	defer c.errMut.Unlock()
+	return c.err
+}
+
+func (c *cast) String() string {
+	return c.name
 }

@@ -46,8 +46,12 @@ func TestMultipathIntegration(t *testing.T) {
 
 	// Then we should be able to select connections using the scheduler
 	selected := scheduler.SelectConnection(deviceID)
-	if selected != conn1 {
-		t.Errorf("Expected conn1 to be selected (highest health), got %v", selected)
+	if selected != nil {
+		if castConn, ok := selected.(*EnhancedMockConnection); !ok || castConn != conn1 {
+			t.Errorf("Expected conn1 to be selected (highest health), got %v", selected)
+		}
+	} else {
+		t.Error("Expected a connection to be selected, got nil")
 	}
 
 	// And we should be able to select for load balancing
@@ -61,8 +65,14 @@ func TestMultipathIntegration(t *testing.T) {
 
 	// Then only conn2 should remain
 	conns := scheduler.GetConnections(deviceID)
-	if len(conns) != 1 || conns[0] != conn2 {
-		t.Errorf("Expected only conn2 to remain, got %v", conns)
+	if len(conns) != 1 {
+		t.Errorf("Expected only one connection to remain, got %d", len(conns))
+	} else if conns[0] != nil {
+		if castConn, ok := conns[0].(*EnhancedMockConnection); !ok || castConn != conn2 {
+			t.Errorf("Expected only conn2 to remain, got %v", conns[0])
+		}
+	} else {
+		t.Error("Expected conn2 to remain, got nil")
 	}
 }
 

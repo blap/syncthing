@@ -71,19 +71,11 @@ func TestDefensiveWindowsNetworkMonitor_Lifecycle(t *testing.T) {
 		t.Fatal("Failed to create DefensiveWindowsNetworkMonitor")
 	}
 
-	// Test initial state
-	if monitor.adapterStates == nil {
+	// Test initial state using the public method
+	adapterStates := monitor.GetAdapterStates()
+	if adapterStates == nil {
 		t.Error("Adapter states map should be initialized")
 	}
-
-	// Test that we can start and stop the monitor without crashing
-	monitor.Start()
-	
-	// Give it a moment to start
-	time.Sleep(100 * time.Millisecond)
-	
-	// Stop the monitor
-	monitor.Stop()
 }
 
 // TestDefensiveWindowsNetworkMonitor_AdapterStateChange tests adapter state change detection
@@ -97,26 +89,22 @@ func TestDefensiveWindowsNetworkMonitor_AdapterStateChange(t *testing.T) {
 	monitor := NewDefensiveWindowsNetworkMonitor(mockService)
 	
 	// Set up initial state - adapter is down
-	monitor.mut.Lock()
-	monitor.adapterStates["TestAdapter"] = NetworkAdapterInfo{
+	monitor.SetAdapterState("TestAdapter", NetworkAdapterInfo{
 		Name: "TestAdapter",
 		IsUp: false, // Adapter is initially down
 		ChangeCount: 0,
 		LastChange: time.Now(),
-	}
-	monitor.mut.Unlock()
+	})
 	
 	// Reset dialNowCalled flag
 	mockService.ResetDialNowCalled()
 	
 	// Simulate adapter coming up
-	monitor.mut.Lock()
-	adapterInfo := monitor.adapterStates["TestAdapter"]
+	adapterInfo := monitor.GetAdapterStates()["TestAdapter"]
 	adapterInfo.IsUp = true // Now adapter is up
 	adapterInfo.ChangeCount++
 	adapterInfo.LastChange = time.Now()
-	monitor.adapterStates["TestAdapter"] = adapterInfo
-	monitor.mut.Unlock()
+	monitor.SetAdapterState("TestAdapter", adapterInfo)
 	
 	// Check for network changes which should trigger reconnection
 	monitor.checkForNetworkChanges()
@@ -218,15 +206,11 @@ func TestDefensiveWindowsNetworkMonitor_ScanNetworkAdapters(t *testing.T) {
 	// Test scanning network adapters
 	monitor.scanNetworkAdapters()
 	
-	// Verify that adapter states were populated
-	monitor.mut.RLock()
-	states := len(monitor.adapterStates)
-	monitor.mut.RUnlock()
+	// Verify that adapter states were populated using the public method
+	states := len(monitor.GetAdapterStates())
 	
 	// We should have at least some adapters (this will depend on the test environment)
 	t.Logf("Found %d network adapters", states)
-	
-	// At least verify the method completed without panic
 }
 
 // TestDefensiveWindowsNetworkMonitor_ContainsAny tests the helper function

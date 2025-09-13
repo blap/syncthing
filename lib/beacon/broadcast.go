@@ -8,13 +8,14 @@ package beacon
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"net"
 	"time"
 
-	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/netutil"
 )
+
+// The logger 'l' is defined in debug.go
 
 func NewBroadcast(port int) Interface {
 	c := newCast("broadcastBeacon")
@@ -59,7 +60,11 @@ func writeBroadcasts(ctx context.Context, inbox <-chan []byte, port int) error {
 		for i := range intfs {
 			intf := intfs[i]
 
+			// Add debug logging for interface information
+			l.Debugln("Checking interface:", intf.Name, "flags:", intf.Flags)
+			
 			if intf.Flags&net.FlagRunning == 0 || intf.Flags&net.FlagBroadcast == 0 {
+				l.Debugln("Skipping interface:", intf.Name, "not running or no broadcast")
 				continue
 			}
 
@@ -74,6 +79,7 @@ func writeBroadcasts(ctx context.Context, inbox <-chan []byte, port int) error {
 				if iaddr, ok := addr.(*net.IPNet); ok && len(iaddr.IP) >= 4 && iaddr.IP.IsGlobalUnicast() && iaddr.IP.To4() != nil {
 					baddr := bcast(iaddr)
 					dsts = append(dsts, baddr.IP)
+					l.Debugln("Found broadcast address:", baddr.IP, "for interface:", intf.Name)
 				}
 			}
 		}
@@ -81,9 +87,10 @@ func writeBroadcasts(ctx context.Context, inbox <-chan []byte, port int) error {
 		if len(dsts) == 0 {
 			// Fall back to the general IPv4 broadcast address
 			dsts = append(dsts, net.IP{0xff, 0xff, 0xff, 0xff})
+			l.Debugln("Using fallback broadcast address: 255.255.255.255")
 		}
 
-		l.Debugln("addresses:", dsts)
+		l.Debugln("Broadcast addresses:", dsts)
 
 		success := 0
 		for _, ip := range dsts {
@@ -102,7 +109,7 @@ func writeBroadcasts(ctx context.Context, inbox <-chan []byte, port int) error {
 
 			if err != nil {
 				// Some other error that we don't expect. Debug and continue.
-				l.Debugln(err)
+				l.Debugln("Broadcast write error:", err, "to", dst)
 				continue
 			}
 
@@ -111,7 +118,8 @@ func writeBroadcasts(ctx context.Context, inbox <-chan []byte, port int) error {
 		}
 
 		if success == 0 {
-			slog.DebugContext(ctx, "Couldn't send any broadcasts", slogutil.Error(err))
+			err := errors.New("couldn't send any broadcasts")
+			l.Debugln(err)
 			return err
 		}
 	}
@@ -120,7 +128,7 @@ func writeBroadcasts(ctx context.Context, inbox <-chan []byte, port int) error {
 func readBroadcasts(ctx context.Context, outbox chan<- recv, port int) error {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: port})
 	if err != nil {
-		l.Debugln(err)
+		l.Debugln("Failed to listen on UDP port:", err)
 		return err
 	}
 
@@ -135,7 +143,7 @@ func readBroadcasts(ctx context.Context, outbox chan<- recv, port int) error {
 	for {
 		n, addr, err := conn.ReadFrom(bs)
 		if err != nil {
-			l.Debugln(err)
+			l.Debugln("Broadcast read error:", err)
 			return err
 		}
 
@@ -148,7 +156,7 @@ func readBroadcasts(ctx context.Context, outbox chan<- recv, port int) error {
 		case <-doneCtx.Done():
 			return doneCtx.Err()
 		default:
-			slog.DebugContext(ctx, "Dropping message")
+			l.Debugln("Dropping broadcast message - outbox full")
 		}
 	}
 }

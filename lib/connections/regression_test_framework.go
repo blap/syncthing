@@ -68,7 +68,7 @@ func (rtf *RegressionTestFramework) RunRegressionTests(ctx context.Context, test
 }
 
 // runSingleTest executes a single connection path test
-func (rtf *RegressionTestFramework) runSingleTest(ctx context.Context, testCase ConnectionPathTestCase) ConnectionPathTestResult {
+func (rtf *RegressionTestFramework) runSingleTest(_ context.Context, testCase ConnectionPathTestCase) ConnectionPathTestResult {
 	startTime := time.Now()
 	result := ConnectionPathTestResult{
 		TestName:  testCase.Name,

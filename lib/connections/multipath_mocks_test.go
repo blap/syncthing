@@ -12,6 +12,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
@@ -204,3 +205,13 @@ func (m *EnhancedMockConnection) String() string {
 func (m *EnhancedMockConnection) Crypto() string           { return "mock" }
 func (m *EnhancedMockConnection) EstablishedAt() time.Time { return m.established }
 func (m *EnhancedMockConnection) GetPingLossRate() float64 { return 0.0 }
+
+// QueryDevice sends a QueryDevice message to the peer device
+func (m *EnhancedMockConnection) QueryDevice(ctx context.Context, query *bep.QueryDevice) error {
+	return nil
+}
+
+// ResponseDevice sends a ResponseDevice message to the peer device
+func (m *EnhancedMockConnection) ResponseDevice(ctx context.Context, response *bep.ResponseDevice) error {
+	return nil
+}

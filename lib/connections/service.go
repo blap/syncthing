@@ -76,7 +76,6 @@ var (
 
 const (
 	// Base timeout values - will be made adaptive
-	baseTLSHandshakeTimeout = 10 * time.Second
 	minTLSHandshakeTimeout  = 5 * time.Second
 	maxTLSHandshakeTimeout  = 30 * time.Second
 	minConnectionLoopSleep  = 5 * time.Second
@@ -328,7 +327,7 @@ func (s *service) handleConns(ctx context.Context) error {
 	}
 }
 
-func (s *service) helloForDevice(remoteID protocol.DeviceID) protocol.Hello {
+func (s *service) helloForDevice(_ protocol.DeviceID) protocol.Hello {
 	hello := protocol.Hello{
 		ClientName:    "syncthing",
 		ClientVersion: build.Version,
@@ -847,19 +846,45 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 }
 
 func (s *service) resolveDeviceAddrs(ctx context.Context, cfg config.DeviceConfiguration) []string {
+	slog.DebugContext(ctx, "Resolving device addresses", 
+		"device", cfg.DeviceID,
+		"addresses", cfg.Addresses)
+	
 	var addrs []string
 	for _, addr := range cfg.Addresses {
 		if addr == "dynamic" {
+			slog.DebugContext(ctx, "Resolving dynamic address for device", 
+				"device", cfg.DeviceID)
+			
 			if s.discoverer != nil {
 				if t, err := s.discoverer.Lookup(ctx, cfg.DeviceID); err == nil {
+					slog.DebugContext(ctx, "Dynamic address resolution successful", 
+						"device", cfg.DeviceID, 
+						"resolvedAddresses", t)
 					addrs = append(addrs, t...)
+				} else {
+					slog.WarnContext(ctx, "Dynamic address resolution failed", 
+						"device", cfg.DeviceID, 
+						"error", err)
 				}
+			} else {
+				slog.WarnContext(ctx, "No discoverer available for dynamic address resolution", 
+					"device", cfg.DeviceID)
 			}
 		} else {
+			slog.DebugContext(ctx, "Adding static address", 
+				"device", cfg.DeviceID, 
+				"address", addr)
 			addrs = append(addrs, addr)
 		}
 	}
-	return stringutil.UniqueTrimmedStrings(addrs)
+	
+	result := stringutil.UniqueTrimmedStrings(addrs)
+	slog.DebugContext(ctx, "Device address resolution complete", 
+		"device", cfg.DeviceID,
+		"finalAddresses", result)
+	
+	return result
 }
 
 type lanChecker struct {

@@ -707,6 +707,68 @@ func (fake *Connection) IndexReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
+func (fake *Connection) IndexUpdate(arg1 context.Context, arg2 *protocol.IndexUpdate) error {
+	fake.indexUpdateMutex.Lock()
+	ret, specificReturn := fake.indexUpdateReturnsOnCall[len(fake.indexUpdateArgsForCall)]
+	fake.indexUpdateArgsForCall = append(fake.indexUpdateArgsForCall, struct {
+		arg1 context.Context
+		arg2 *protocol.IndexUpdate
+	}{arg1, arg2})
+	stub := fake.IndexUpdateStub
+	fakeReturns := fake.indexUpdateReturns
+	fake.recordInvocation("IndexUpdate", []interface{}{arg1, arg2})
+	fake.indexUpdateMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Connection) IndexUpdateCallCount() int {
+	fake.indexUpdateMutex.RLock()
+	defer fake.indexUpdateMutex.RUnlock()
+	return len(fake.indexUpdateArgsForCall)
+}
+
+func (fake *Connection) IndexUpdateCalls(stub func(context.Context, *protocol.IndexUpdate) error) {
+	fake.indexUpdateMutex.Lock()
+	defer fake.indexUpdateMutex.Unlock()
+	fake.IndexUpdateStub = stub
+}
+
+func (fake *Connection) IndexUpdateArgsForCall(i int) (context.Context, *protocol.IndexUpdate) {
+	fake.indexUpdateMutex.RLock()
+	defer fake.indexUpdateMutex.RUnlock()
+	argsForCall := fake.indexUpdateArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Connection) IndexUpdateReturns(result1 error) {
+	fake.indexUpdateMutex.Lock()
+	defer fake.indexUpdateMutex.Unlock()
+	fake.IndexUpdateStub = nil
+	fake.indexUpdateReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Connection) IndexUpdateReturnsOnCall(i int, result1 error) {
+	fake.indexUpdateMutex.Lock()
+	defer fake.indexUpdateMutex.Unlock()
+	fake.IndexUpdateStub = nil
+	if fake.indexUpdateReturnsOnCall == nil {
+		fake.indexUpdateReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.indexUpdateReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *Connection) IsLocal() bool {
 	fake.isLocalMutex.Lock()
 	ret, specificReturn := fake.isLocalReturnsOnCall[len(fake.isLocalArgsForCall)]
@@ -813,112 +875,6 @@ func (fake *Connection) PriorityReturnsOnCall(i int, result1 int) {
 	}{result1}
 }
 
-func (fake *Connection) RemoteAddr() net.Addr {
-	fake.remoteAddrMutex.Lock()
-	ret, specificReturn := fake.remoteAddrReturnsOnCall[len(fake.remoteAddrArgsForCall)]
-	fake.remoteAddrArgsForCall = append(fake.remoteAddrArgsForCall, struct {
-	}{})
-	stub := fake.RemoteAddrStub
-	fakeReturns := fake.remoteAddrReturns
-	fake.recordInvocation("RemoteAddr", []interface{}{})
-	fake.remoteAddrMutex.Unlock()
-	if stub != nil {
-		return stub()
-	}
-	if specificReturn {
-		return ret.result1
-	}
-	return fakeReturns.result1
-}
-
-func (fake *Connection) RemoteAddrCallCount() int {
-	fake.remoteAddrMutex.RLock()
-	defer fake.remoteAddrMutex.RUnlock()
-	return len(fake.remoteAddrArgsForCall)
-}
-
-func (fake *Connection) RemoteAddrCalls(stub func() net.Addr) {
-	fake.remoteAddrMutex.Lock()
-	defer fake.remoteAddrMutex.Unlock()
-	fake.RemoteAddrStub = stub
-}
-
-func (fake *Connection) RemoteAddrReturns(result1 net.Addr) {
-	fake.remoteAddrMutex.Lock()
-	defer fake.remoteAddrMutex.Unlock()
-	fake.RemoteAddrStub = nil
-	fake.remoteAddrReturns = struct {
-		result1 net.Addr
-	}{result1}
-}
-
-func (fake *Connection) RemoteAddrReturnsOnCall(i int, result1 net.Addr) {
-	fake.remoteAddrMutex.Lock()
-	defer fake.remoteAddrMutex.Unlock()
-	fake.RemoteAddrStub = nil
-	if fake.remoteAddrReturnsOnCall == nil {
-		fake.remoteAddrReturnsOnCall = make(map[int]struct {
-			result1 net.Addr
-		})
-	}
-	fake.remoteAddrReturnsOnCall[i] = struct {
-		result1 net.Addr
-	}{result1}
-}
-
-func (fake *Connection) IndexUpdate(arg1 context.Context, arg2 *protocol.IndexUpdate) error {
-	fake.indexUpdateMutex.Lock()
-	ret, specificReturn := fake.indexUpdateReturnsOnCall[len(fake.indexUpdateArgsForCall)]
-	fake.indexUpdateArgsForCall = append(fake.indexUpdateArgsForCall, struct {
-		arg1 context.Context
-		arg2 *protocol.IndexUpdate
-	}{arg1, arg2})
-	stub := fake.IndexUpdateStub
-	fakeReturns := fake.indexUpdateReturns
-	fake.recordInvocation("IndexUpdate", []interface{}{arg1, arg2})
-	fake.indexUpdateMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2)
-	}
-	if specificReturn {
-		return ret.result1
-	}
-	return fakeReturns.result1
-}
-
-func (fake *Connection) IndexUpdateCallCount() int {
-	fake.indexUpdateMutex.RLock()
-	defer fake.indexUpdateMutex.RUnlock()
-	return len(fake.indexUpdateArgsForCall)
-}
-
-func (fake *Connection) IndexUpdateCalls(stub func(context.Context, *protocol.IndexUpdate) error) {
-	fake.indexUpdateMutex.Lock()
-	defer fake.indexUpdateMutex.Unlock()
-	fake.IndexUpdateStub = stub
-}
-
-func (fake *Connection) IndexUpdateArgsForCall(i int) (context.Context, *protocol.IndexUpdate) {
-	fake.indexUpdateMutex.RLock()
-	defer fake.indexUpdateMutex.RUnlock()
-	argsForCall := fake.indexUpdateArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
-}
-
-func (fake *Connection) IndexUpdateReturns(result1 error) {
-	fake.indexUpdateMutex.Lock()
-	defer fake.indexUpdateMutex.Unlock()
-	fake.IndexUpdateStub = nil
-	if fake.indexUpdateReturnsOnCall == nil {
-		fake.indexUpdateReturnsOnCall = make(map[int]struct {
-			result1 error
-		})
-	}
-	fake.indexUpdateReturnsOnCall[len(fake.indexUpdateArgsForCall)-1] = struct {
-		result1 error
-	}{result1}
-}
-
 func (fake *Connection) QueryDevice(arg1 context.Context, arg2 *bep.QueryDevice) error {
 	fake.queryDeviceMutex.Lock()
 	ret, specificReturn := fake.queryDeviceReturnsOnCall[len(fake.queryDeviceArgsForCall)]
@@ -978,6 +934,59 @@ func (fake *Connection) QueryDeviceReturnsOnCall(i int, result1 error) {
 	}
 	fake.queryDeviceReturnsOnCall[i] = struct {
 		result1 error
+	}{result1}
+}
+
+func (fake *Connection) RemoteAddr() net.Addr {
+	fake.remoteAddrMutex.Lock()
+	ret, specificReturn := fake.remoteAddrReturnsOnCall[len(fake.remoteAddrArgsForCall)]
+	fake.remoteAddrArgsForCall = append(fake.remoteAddrArgsForCall, struct {
+	}{})
+	stub := fake.RemoteAddrStub
+	fakeReturns := fake.remoteAddrReturns
+	fake.recordInvocation("RemoteAddr", []interface{}{})
+	fake.remoteAddrMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Connection) RemoteAddrCallCount() int {
+	fake.remoteAddrMutex.RLock()
+	defer fake.remoteAddrMutex.RUnlock()
+	return len(fake.remoteAddrArgsForCall)
+}
+
+func (fake *Connection) RemoteAddrCalls(stub func() net.Addr) {
+	fake.remoteAddrMutex.Lock()
+	defer fake.remoteAddrMutex.Unlock()
+	fake.RemoteAddrStub = stub
+}
+
+func (fake *Connection) RemoteAddrReturns(result1 net.Addr) {
+	fake.remoteAddrMutex.Lock()
+	defer fake.remoteAddrMutex.Unlock()
+	fake.RemoteAddrStub = nil
+	fake.remoteAddrReturns = struct {
+		result1 net.Addr
+	}{result1}
+}
+
+func (fake *Connection) RemoteAddrReturnsOnCall(i int, result1 net.Addr) {
+	fake.remoteAddrMutex.Lock()
+	defer fake.remoteAddrMutex.Unlock()
+	fake.RemoteAddrStub = nil
+	if fake.remoteAddrReturnsOnCall == nil {
+		fake.remoteAddrReturnsOnCall = make(map[int]struct {
+			result1 net.Addr
+		})
+	}
+	fake.remoteAddrReturnsOnCall[i] = struct {
+		result1 net.Addr
 	}{result1}
 }
 

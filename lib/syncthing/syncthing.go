@@ -254,11 +254,13 @@ func (a *App) startup() error {
 	connRegistry := registry.New()
 
 	// Create the discovery manager first (chicken and egg issue)
-	discoveryManager := discover.NewManager(a.myID, a.cfg, a.cert, a.evLogger, addrLister, connRegistry, nil)
+	// We need to pass a nil connectionsService for now, and set it later
+	var connectionsService connections.Service
+	discoveryManager := discover.NewManager(a.myID, a.cfg, a.cert, a.evLogger, addrLister, connRegistry, connectionsService)
 
 	// Create the model first, before creating the connection service
 	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen, discoveryManager)
-	connectionsService := connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
+	connectionsService = connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
 
 	// Now we can properly set the connections service in the discovery manager
 	discoveryManager.SetConnectionsService(connectionsService)

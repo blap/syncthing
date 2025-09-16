@@ -147,7 +147,7 @@ func getTCPConnectionPair() (net.Conn, net.Conn, error) {
 func negotiateTLS(cert tls.Certificate, conn0, conn1 net.Conn) (net.Conn, net.Conn) {
 	cfg := &tls.Config{
 		Certificates:           []tls.Certificate{cert},
-		NextProtos:             []string{"bep/1.0"},
+		NextProtos:             []string{"bep/2.0", "bep/1.0", "h2", "http/1.1"},
 		ClientAuth:             tls.RequestClientCert,
 		SessionTicketsDisabled: true,
 		InsecureSkipVerify:     true,

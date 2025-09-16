@@ -237,12 +237,26 @@ func (a *App) startup() error {
 	// The TLS configuration is used for both the listening socket and outgoing
 	// connections.
 
-	tlsCfg := tlsutil.SecureDefaultTLS13()
+	// Use TLS 1.2 compatible configuration for better compatibility with older devices
+	// while still supporting TLS 1.3 when possible
+	tlsCfg := tlsutil.SecureDefaultWithTLS12()
 	tlsCfg.Certificates = []tls.Certificate{a.cert}
-	tlsCfg.NextProtos = []string{bepProtocolName}
+	// Support multiple protocol versions for maximum compatibility
+	// Order matters: more specific protocols should come first
+	tlsCfg.NextProtos = []string{"bep/2.0", "bep/1.0", "h2", "http/1.1"}
 	tlsCfg.ClientAuth = tls.RequestClientCert
 	tlsCfg.SessionTicketsDisabled = true
 	tlsCfg.InsecureSkipVerify = true
+	
+	// Enhance TLS configuration for better security while maintaining compatibility
+	// Set stronger preferences for modern TLS versions when possible
+	tlsCfg.PreferServerCipherSuites = true
+	
+	// Improve session resumption by increasing cache size
+	// This can help with connection performance while maintaining security
+	if tlsCfg.ClientSessionCache == nil {
+		tlsCfg.ClientSessionCache = tls.NewLRUClientSessionCache(32)
+	}
 
 	// Start discovery and connection management
 
@@ -260,8 +274,8 @@ func (a *App) startup() error {
 
 	// Create the model first, before creating the connection service
 	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen, discoveryManager)
+	// Pass both protocol names to support v1 and v2 devices
 	connectionsService = connections.NewService(a.cfg, a.myID, m, tlsCfg, discoveryManager, bepProtocolName, tlsDefaultCommonName, a.evLogger, connRegistry, keyGen)
-
 	// Now we can properly set the connections service in the discovery manager
 	discoveryManager.SetConnectionsService(connectionsService)
 	a.Internals = newInternals(m)

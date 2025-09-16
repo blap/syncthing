@@ -18,10 +18,10 @@ func TestAdaptiveTimeouts_CalculateAdaptiveTLSHandshakeTimeout(t *testing.T) {
 	at := newAdaptiveTimeouts()
 	timeout := at.calculateAdaptiveTLSHandshakeTimeout()
 	
-	// Should be around the default timeout (10 seconds)
-	// With 0.5 success rate, timeout should be 10 * (2.0 - 0.5) = 15 seconds
-	if timeout < 13*time.Second || timeout > 17*time.Second {
-		t.Errorf("Expected timeout around 15s, got %v", timeout)
+	// Should be around the default timeout (15 seconds with our changes)
+	// With 0.5 success rate, timeout should be 15 * (2.0 - 0.5) = 22.5 seconds
+	if timeout < 20*time.Second || timeout > 25*time.Second {
+		t.Errorf("Expected timeout around 22.5s, got %v", timeout)
 	}
 	
 	// Test with poor success rate (should increase timeout)
@@ -30,9 +30,9 @@ func TestAdaptiveTimeouts_CalculateAdaptiveTLSHandshakeTimeout(t *testing.T) {
 	at.mut.Unlock()
 	
 	timeout = at.calculateAdaptiveTLSHandshakeTimeout()
-	// With 0.3 success rate, timeout should be 10 * (2.0 - 0.3) = 17 seconds
-	if timeout < 15*time.Second || timeout > 19*time.Second {
-		t.Errorf("Expected timeout around 17s for poor success rate, got %v", timeout)
+	// With 0.3 success rate, timeout should be 15 * (2.0 - 0.3) = 25.5 seconds
+	if timeout < 23*time.Second || timeout > 28*time.Second {
+		t.Errorf("Expected timeout around 25.5s for poor success rate, got %v", timeout)
 	}
 	
 	// Test with good success rate (should decrease timeout)
@@ -41,9 +41,9 @@ func TestAdaptiveTimeouts_CalculateAdaptiveTLSHandshakeTimeout(t *testing.T) {
 	at.mut.Unlock()
 	
 	timeout = at.calculateAdaptiveTLSHandshakeTimeout()
-	// With 0.9 success rate, timeout should be 10 * (2.0 - 0.9) = 11 seconds
-	if timeout < 9*time.Second || timeout > 13*time.Second {
-		t.Errorf("Expected timeout around 11s for good success rate, got %v", timeout)
+	// With 0.9 success rate, timeout should be 15 * (2.0 - 0.9) = 16.5 seconds
+	if timeout < 14*time.Second || timeout > 19*time.Second {
+		t.Errorf("Expected timeout around 16.5s for good success rate, got %v", timeout)
 	}
 }
 
@@ -59,11 +59,11 @@ func TestAdaptiveTimeouts_UpdateConnectionSuccessRate(t *testing.T) {
 	}
 	
 	// Test updating with success
-	at.updateConnectionSuccessRate(true)
+	at.updateConnectionSuccessRate(true, false) // Success, not a version issue
 	successRateAfterSuccess := at.connectionSuccessRate
 	
 	// Test updating with failure
-	at.updateConnectionSuccessRate(false)
+	at.updateConnectionSuccessRate(false, false) // Failure, not a version issue
 	successRateAfterFailure := at.connectionSuccessRate
 	
 	// Success should increase the rate (0.5 * 0.9 + 0.1 = 0.55)

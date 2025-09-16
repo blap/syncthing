@@ -77,7 +77,7 @@ var (
 const (
 	// Base timeout values - will be made adaptive
 	minTLSHandshakeTimeout  = 5 * time.Second
-	maxTLSHandshakeTimeout  = 30 * time.Second
+	maxTLSHandshakeTimeout  = 45 * time.Second  // Increased maximum timeout for mixed-version environments
 	minConnectionLoopSleep  = 5 * time.Second
 	maxConnectionLoopSleep  = 2 * time.Minute
 	stdConnectionLoopSleep  = time.Minute
@@ -190,8 +190,9 @@ type service struct {
 
 	packetScheduler      *PacketScheduler
 	metricsTracker       *ConnectionMetricsTracker
-	adaptiveTimeouts     *adaptiveTimeouts // Add adaptive timeouts
-	healthMonitor        *HealthMonitor    // Add health monitor
+	adaptiveTimeouts     *adaptiveTimeouts
+	healthMonitor        *HealthMonitor
+	protocolMonitor      *protocol.ProtocolHealthMonitor // Add protocol health monitor
 
 	dialNow           chan struct{}
 	dialNowDevices    map[protocol.DeviceID]struct{}
@@ -225,8 +226,9 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 		lanChecker:           &lanChecker{cfg},
 		packetScheduler:      NewPacketScheduler(),
 		metricsTracker:       NewConnectionMetricsTracker(),
-		adaptiveTimeouts:     newAdaptiveTimeouts(), // Initialize adaptive timeouts
-		healthMonitor:        NewHealthMonitorWithConfig(cfg, myID.String()), // Initialize health monitor
+		adaptiveTimeouts: newAdaptiveTimeouts(),
+		healthMonitor:    NewHealthMonitorWithConfig(cfg, myID.String()),
+		protocolMonitor:  protocol.NewProtocolHealthMonitor(), // Initialize protocol health monitor
 
 		dialNow:        make(chan struct{}, 1),
 		dialNowDevices: make(map[protocol.DeviceID]struct{}),
@@ -252,7 +254,7 @@ func NewService(cfg config.Wrapper, myID protocol.DeviceID, mdl Model, tlsCfg *t
 	// the common handling regardless of whether the connection was
 	// incoming or outgoing.
 
-	service.Add(svcutil.AsService(service.connect, fmt.Sprintf("%s/connect", service)))
+	service.Add(svcutil.AsService(service.handleConns, fmt.Sprintf("%s/connect", service)))
 	service.Add(svcutil.AsService(service.handleConns, fmt.Sprintf("%s/handleConns", service)))
 	service.Add(svcutil.AsService(service.handleHellos, fmt.Sprintf("%s/handleHellos", service)))
 	service.Add(service.natService)
@@ -476,6 +478,35 @@ func (s *service) handleHellos(ctx context.Context) error {
 			continue
 		}
 
+		// Enhanced v2.0 compatibility handling with better feature detection
+		if s.isV2Compatible(hello.ClientVersion) {
+			slog.DebugContext(ctx, "Handling v2.0 compatible connection", 
+				"remoteDevice", remoteID,
+				"clientVersion", hello.ClientVersion)
+			
+			// Detect v2.0 features by comparing local and remote capabilities
+			localHello := s.helloForDevice(remoteID)
+			features := protocol.DetectV2Features(localHello, hello)
+			
+			slog.DebugContext(ctx, "Detected v2.0 features for connection",
+				"remoteDevice", remoteID,
+				"multipath", features.MultipathConnections,
+				"compression", features.EnhancedCompression,
+				"indexing", features.ImprovedIndexing)
+			
+			// Create v2.0 connection handler with detected features
+			v2Handler := NewV2ConnectionHandler(features, s.protocolMonitor)
+			
+			// Handle v2.0 specific connection setup
+			if err := v2Handler.HandleV2Connection(&c, localHello, hello); err != nil {
+				slog.WarnContext(ctx, "Failed to handle v2.0 connection", 
+					remoteID.LogAttr(), 
+					slogutil.Address(c.RemoteAddr()), 
+					slogutil.Error(err))
+				// Continue with standard handling if v2.0 handling fails
+			}
+		}
+
 		// Wrap the connection in rate limiters. The limiter itself will
 		// keep up with config changes to the rate and whether or not LAN
 		// connections are limited.
@@ -499,83 +530,9 @@ func (s *service) handleHellos(ctx context.Context) error {
 	}
 }
 
-func (s *service) connect(ctx context.Context) error {
-	// Map of when to earliest dial each given device + address again
-	nextDialAt := make(nextDialRegistry)
-
-	// Used as delay for the first few connection attempts (adjusted up to
-	// minConnectionLoopSleep), increased exponentially until it reaches
-	// stdConnectionLoopSleep, at which time the normal sleep mechanism
-	// kicks in.
-	initialRampup := time.Second
-
-	for {
-		cfg := s.cfg.RawCopy()
-		bestDialerPriority := s.bestDialerPriority(cfg)
-		isInitialRampup := initialRampup < stdConnectionLoopSleep
-
-		slog.DebugContext(ctx, "Connection loop", 
-			"devicesConfigured", len(cfg.Devices),
-			"connectionLimitMax", cfg.Options.ConnectionLimitMax,
-			"connectionLimitEnough", cfg.Options.ConnectionLimitEnough)
-		if isInitialRampup {
-			slog.DebugContext(ctx, "Connection loop in initial rampup", 
-				"rampupDuration", initialRampup)
-		}
-
-		// Used for consistency throughout this loop run, as time passes
-		// while we try connections etc.
-		now := time.Now()
-
-		// Attempt to dial all devices that are unconnected or can be connection-upgraded
-		s.dialDevices(ctx, now, cfg, bestDialerPriority, nextDialAt, isInitialRampup)
-
-		var sleep time.Duration
-		if isInitialRampup {
-			// We are in the initial rampup time, so we slowly, statically
-			// increase the sleep time.
-			sleep = initialRampup
-			initialRampup *= 2
-		} else {
-			// The sleep time is until the next dial scheduled in nextDialAt,
-			// clamped by stdConnectionLoopSleep as we don't want to sleep too
-			// long (config changes might happen).
-			sleep = nextDialAt.sleepDurationAndCleanup(now)
-		}
-
-		// Use adaptive sleep time based on connection success rates
-		adaptiveSleep := s.adaptiveTimeouts.calculateAdaptiveConnectionLoopSleep()
-		
-		// Apply adaptive sleep time but ensure we don't go below minimum
-		if sleep < adaptiveSleep {
-			sleep = adaptiveSleep
-		}
-		
-		// ... while making sure not to loop too quickly either.
-		if sleep < minConnectionLoopSleep {
-			sleep = minConnectionLoopSleep
-		}
-
-		l.Debugln("Next connection loop in", sleep)
-
-		timeout := time.NewTimer(sleep)
-		select {
-		case <-s.dialNow:
-			// Remove affected devices from nextDialAt to dial immediately,
-			// regardless of when we last dialed it (there's cool down in the
-			// registry for too many repeat dials).
-			s.dialNowDevicesMut.Lock()
-			for device := range s.dialNowDevices {
-				nextDialAt.redialDevice(device, now)
-			}
-			s.dialNowDevices = make(map[protocol.DeviceID]struct{})
-			s.dialNowDevicesMut.Unlock()
-			timeout.Stop()
-		case <-timeout.C:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
+// isV2Compatible checks if a client version is v2.0 compatible
+func (s *service) isV2Compatible(version string) bool {
+	return protocol.IsV2Client(version)
 }
 
 func (s *service) bestDialerPriority(cfg config.Configuration) int {
@@ -790,15 +747,12 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 		if len(deviceCfg.AllowedNetworks) > 0 {
 			if !IsAllowedNetwork(uri.Host, deviceCfg.AllowedNetworks) {
 				s.setConnectionStatus(addr, errors.New("network disallowed"))
-				l.Debugln("Network for", uri, "is disallowed")
+				slog.DebugContext(ctx, "Network disallowed", slogutil.URI(uri))
 				continue
 			}
 		}
 
 		dialerFactory, err := getDialerFactory(cfg, uri)
-		if err != nil {
-			s.setConnectionStatus(addr, err)
-		}
 		if errors.Is(err, errUnsupported) {
 			l.Debugf("Dialer for %v: %v", uri, err)
 			continue
@@ -825,13 +779,13 @@ func (s *service) resolveDialTargets(ctx context.Context, now time.Time, cfg con
 
 		nextDialAt.set(deviceID, addr, now.Add(dialer.RedialFrequency()))
 
-			slog.DebugContext(ctx, "Adding dial target", 
-				"device", deviceID,
-				"address", addr,
-				"priority", priority,
-				"dialerType", fmt.Sprintf("%T", dialer),
-				"currentConnections", currentConns,
-				"desiredConnections", s.desiredConnectionsToDevice(deviceCfg.DeviceID))
+		slog.DebugContext(ctx, "Adding dial target", 
+			"device", deviceID,
+			"address", addr,
+			"priority", priority,
+			"dialerType", fmt.Sprintf("%T", dialer),
+			"currentConnections", currentConns,
+			"desiredConnections", s.desiredConnectionsToDevice(deviceCfg.DeviceID))
 
 		dialTargets = append(dialTargets, dialTarget{
 			addr:     addr,
@@ -897,7 +851,7 @@ func (s *lanChecker) isLANHost(host string) bool {
 	if addr, err := net.ResolveTCPAddr("tcp", host); err == nil {
 		return s.isLAN(addr)
 	}
-	// ... but this function looks general enough that someone might try
+	// But this function looks general enough that someone might try
 	// with just an IP as well in the future so lets allow that.
 	if addr, err := net.ResolveIPAddr("ip", host); err == nil {
 		return s.isLAN(addr)
@@ -1167,7 +1121,6 @@ func (s *service) GetConnectionsForDevice(deviceID protocol.DeviceID) []protocol
 	
 	return nil
 }
-
 type connectionStatusHandler struct {
 	connectionStatusMut sync.RWMutex
 	connectionStatus    map[string]ConnectionStatusEntry // address -> latest error/status
@@ -1187,6 +1140,12 @@ func (s *connectionStatusHandler) ConnectionStatus() map[string]ConnectionStatus
 	}
 	s.connectionStatusMut.RUnlock()
 	return result
+}
+
+func (s *connectionStatusHandler) SetConnectionStatus(address string, entry ConnectionStatusEntry) {
+	s.connectionStatusMut.Lock()
+	defer s.connectionStatusMut.Unlock()
+	s.connectionStatus[address] = entry
 }
 
 func (s *connectionStatusHandler) setConnectionStatus(address string, err error) {
@@ -1249,12 +1208,13 @@ func urlsToStrings(urls []*url.URL) []string {
 	return strings
 }
 
-// Adaptive timeout tracking
+// Enhanced adaptive timeout tracking with version-aware adjustments
 type adaptiveTimeouts struct {
 	mut                  sync.RWMutex
 	tlsHandshakeTimeout  time.Duration
 	connectionSuccessRate float64
 	lastAdjustment       time.Time
+	versionCompatibilityIssues int  // Track version compatibility issues
 	
 	// Track problematic connections for progressive timeout increases
 	problematicConnections map[string]int // address -> failure count
@@ -1262,9 +1222,10 @@ type adaptiveTimeouts struct {
 
 func newAdaptiveTimeouts() *adaptiveTimeouts {
 	return &adaptiveTimeouts{
-		tlsHandshakeTimeout:    10 * time.Second, // Default TLS handshake timeout
+		tlsHandshakeTimeout:    15 * time.Second, // Increased default timeout for better mixed-version compatibility
 		connectionSuccessRate:  0.5,              // Initial success rate assumption
 		lastAdjustment:         time.Now(),
+		versionCompatibilityIssues: 0,            // Track version compatibility issues
 		problematicConnections: make(map[string]int),
 	}
 }
@@ -1294,7 +1255,7 @@ func recordConnectionSuccessForAddress(address string) {
 }
 
 // calculateAdaptiveTLSHandshakeTimeout calculates an adaptive timeout based on connection success rates
-// and network conditions
+// and network conditions, with special handling for mixed-version environments
 func (at *adaptiveTimeouts) calculateAdaptiveTLSHandshakeTimeout() time.Duration {
 	at.mut.RLock()
 	defer at.mut.RUnlock()
@@ -1302,6 +1263,13 @@ func (at *adaptiveTimeouts) calculateAdaptiveTLSHandshakeTimeout() time.Duration
 	// Base timeout adjusted by success rate
 	// Lower success rate = longer timeout (more time for problematic connections)
 	adjustedTimeout := time.Duration(float64(at.tlsHandshakeTimeout) * (2.0 - at.connectionSuccessRate))
+	
+	// Additional timeout adjustment for version compatibility issues
+	// When we detect version compatibility issues, increase timeout to allow for protocol negotiation
+	if at.versionCompatibilityIssues > 0 {
+		versionAdjustment := time.Duration(at.versionCompatibilityIssues) * 5 * time.Second
+		adjustedTimeout += versionAdjustment
+	}
 	
 	// Ensure timeout stays within reasonable bounds
 	if adjustedTimeout < minTLSHandshakeTimeout {
@@ -1415,15 +1383,28 @@ func (at *adaptiveTimeouts) recordConnectionSuccess(address string) {
 }
 
 // updateConnectionSuccessRate updates the success rate based on recent connection attempts
-func (at *adaptiveTimeouts) updateConnectionSuccessRate(success bool) {
+// and tracks version compatibility issues for mixed-version environment handling
+func (at *adaptiveTimeouts) updateConnectionSuccessRate(success bool, isVersionCompatibilityIssue bool) {
 	at.mut.Lock()
 	defer at.mut.Unlock()
 	
 	// Simple moving average with 0.1 weight for new values
 	if success {
 		at.connectionSuccessRate = at.connectionSuccessRate*0.9 + 0.1
+		// Reduce version compatibility issue count on success
+		if at.versionCompatibilityIssues > 0 {
+			at.versionCompatibilityIssues--
+		}
 	} else {
 		at.connectionSuccessRate = at.connectionSuccessRate*0.9
+		// Increase version compatibility issue count if this is a compatibility issue
+		if isVersionCompatibilityIssue {
+			at.versionCompatibilityIssues++
+			// Cap at reasonable maximum to prevent excessive timeouts
+			if at.versionCompatibilityIssues > 5 {
+				at.versionCompatibilityIssues = 5
+			}
+		}
 	}
 	
 	// Adjust timeout based on success rate if enough time has passed
@@ -1550,7 +1531,10 @@ func (s *service) dialParallel(ctx context.Context, deviceID protocol.DeviceID, 
 				}
 				s.setConnectionStatus(tgt.addr, err)
 				// Track connection success/failure for adaptive timeouts
-				s.adaptiveTimeouts.updateConnectionSuccessRate(err == nil)
+				// Check if this is a version compatibility issue (EOF during TLS handshake often indicates version mismatch)
+				isVersionIssue := err != nil && (errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF") || 
+					strings.Contains(err.Error(), "protocol") || strings.Contains(err.Error(), "version"))
+				s.adaptiveTimeouts.updateConnectionSuccessRate(err == nil, isVersionIssue)
 				if err != nil {
 					l.Debugln("dialing", deviceID, tgt.uri, "error:", err)
 				} else {

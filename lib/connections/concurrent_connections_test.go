@@ -129,7 +129,7 @@ func TestServiceDialNowConcurrent(t *testing.T) {
 		cert := mustGetCert(t)
 		tlsCfg := &tls.Config{
 			Certificates:       []tls.Certificate{cert},
-			NextProtos:         []string{"bep/1.0"},
+			NextProtos:         []string{"bep/2.0", "bep/1.0", "h2", "http/1.1"},
 			ServerName:         "syncthing",
 			InsecureSkipVerify: true,
 			ClientAuth:         tls.RequestClientCert,

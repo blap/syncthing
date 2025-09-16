@@ -114,7 +114,36 @@ func migrateToConfigV51(cfg *Configuration) {
 }
 
 func migrateToConfigV50(cfg *Configuration) {
-	// v50 is Syncthing 2.0
+	// v50 is Syncthing 2.0 - enable essential v2.0 features for compatibility
+	
+	// Enable protocol fallback for better compatibility between v1 and v2 devices
+	// This is critical for ensuring connections work during upgrade scenarios
+	if !cfg.Options.ProtocolFallbackEnabled {
+		cfg.Options.ProtocolFallbackEnabled = true
+	}
+	
+	// Set reasonable protocol fallback threshold
+	if cfg.Options.ProtocolFallbackThreshold == 0 {
+		cfg.Options.ProtocolFallbackThreshold = 3
+	}
+	
+	// Ensure preferred protocols include modern protocols for better connectivity
+	if len(cfg.Options.PreferredProtocols) == 0 {
+		cfg.Options.PreferredProtocols = []string{"quic", "tcp", "relay"}
+	}
+	
+	// Enable adaptive keep-alive for better connection stability
+	if !cfg.Options.AdaptiveKeepAliveEnabled {
+		cfg.Options.AdaptiveKeepAliveEnabled = true
+	}
+	
+	// Set transfer chunk size to improve performance for v2.0 connections
+	if cfg.Options.TransferChunkSizeBytes == 0 {
+		cfg.Options.TransferChunkSizeBytes = 1048576 // 1MB
+	}
+	
+	// Log that v2.0 migration has been applied
+	slog.Debug("Applied Syncthing v2.0 configuration migration for compatibility")
 }
 
 func migrateToConfigV37(cfg *Configuration) {

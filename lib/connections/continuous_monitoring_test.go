@@ -44,7 +44,7 @@ func TestContinuousMonitoringFramework(t *testing.T) {
 	// Create TLS configurations
 	tlsCfg1 := &tls.Config{
 		Certificates:       []tls.Certificate{cert1},
-		NextProtos:         []string{"bep/1.0"},
+		NextProtos:         []string{"bep/2.0", "bep/1.0", "h2", "http/1.1"},
 		ServerName:         "syncthing",
 		InsecureSkipVerify: true,
 		ClientAuth:         tls.RequestClientCert,

@@ -437,12 +437,23 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 		// Continue processing but log the incompatibility
 	}
 
-	// Check feature compatibility
+	// Check feature compatibility with enhanced logging and graceful degradation
 	if pkt.Features > 0 {
 		localFeatures := c.getSupportedFeatures()
 		missingFeatures := (^localFeatures) & pkt.Features
+		
+		// Enhanced logging for feature analysis
+		slog.DebugContext(ctx, "Feature compatibility analysis", 
+			"device", id,
+			"remoteFeatures", pkt.Features,
+			"remoteFeatureNames", c.getFeatureNames(pkt.Features),
+			"localFeatures", localFeatures,
+			"localFeatureNames", c.getFeatureNames(localFeatures),
+			"missingFeatures", missingFeatures,
+			"missingFeatureNames", c.getFeatureNames(missingFeatures))
+		
 		if missingFeatures > 0 {
-			slog.InfoContext(ctx, "Remote device has features not supported locally", 
+			slog.InfoContext(ctx, "Remote device has features not supported locally - will use common features only", 
 				"device", id,
 				"missingFeatures", c.getFeatureNames(missingFeatures))
 		}
@@ -450,10 +461,18 @@ func (c *localClient) handleAnnouncement(ctx context.Context, buf []byte, addr n
 		// Log supported features in common
 		commonFeatures := localFeatures & pkt.Features
 		if commonFeatures > 0 {
-			slog.DebugContext(ctx, "Common features with remote device", 
+			slog.DebugContext(ctx, "Common features with remote device - using these for communication", 
 				"device", id,
 				"commonFeatures", c.getFeatureNames(commonFeatures))
+		} else {
+			slog.WarnContext(ctx, "No common features with remote device - falling back to basic protocol features", 
+				"device", id)
+			// Even without common features, we should still allow basic connection
+			// The protocol should gracefully degrade to basic features
 		}
+	} else {
+		// No features advertised by remote device - this is fine, use basic protocol
+		slog.DebugContext(ctx, "Remote device did not advertise any features - using basic protocol", "device", id)
 	}
 
 	var newDevice bool

@@ -97,13 +97,13 @@ func TestRelayConnection(t *testing.T) {
 	// Create TLS configurations
 	tlsCfg1 := &tls.Config{
 		Certificates: []tls.Certificate{generateRelayTestCertificate(t, device1ID)},
-		NextProtos:   []string{"bep/1.0"},
+		NextProtos:   []string{"bep/2.0", "bep/1.0", "h2", "http/1.1"},
 		ServerName:   "syncthing",
 	}
 	
 	tlsCfg2 := &tls.Config{
 		Certificates: []tls.Certificate{generateRelayTestCertificate(t, device2ID)},
-		NextProtos:   []string{"bep/1.0"},
+		NextProtos:   []string{"bep/2.0", "bep/1.0", "h2", "http/1.1"},
 		ServerName:   "syncthing",
 	}
 
